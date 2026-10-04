@@ -43,7 +43,7 @@ python -m http.server 8000 --bind 0.0.0.0 # http://localhost:8000
 - Recession probability: the NY Fed CSV ends at 2017-06, so the card falls back to a clearly labeled proxy computed here from FRED T10Y3M with the published probit (P = 100 ? ?(?0.5333 ? 0.6330 ? monthly mean 10y?3m spread), 12 months ahead). Over the overlap with the official CSV the mean absolute difference is 0.07 points. It is not an official NY Fed release.
 - Cboe's downloadable total put/call CSV ends in 2019 and is stale. Cboe's newer daily statistics are only on its website/undocumented endpoints, and Cboe's terms prohibit automated access, so they are not fetched; the Put/Call card stays local-only and stale with a link to the source.
 - The Cboe total put/call CSV is available and parsed in local mode only; Cboe states its use is subject to Cboe Website Terms and Conditions, so its values/history are excluded from the public JSON.
-- A/D line, the share of S&P constituents above their 200-day averages, and new-high/new-low breadth remain disconnected. Reconstructing these from hundreds of symbols via yfinance would create large, repeated automated downloads from an unofficial Yahoo Finance client, with rate-limit and Yahoo terms-of-use risk. No constituent history is automatically downloaded.
+- A/D line: no free, officially licensed API/CSV exists (NYSE/Nasdaq historical breadth is sold via market-data products; Nasdaq Data Link/Stooq/StockCharts/WSJ either require paid access, block automation, or forbid redistribution; FRED has no such series). It is therefore a local-only manual-CSV series (see below), restricted in public JSON/AI prompts. The remaining items - the share of S&P constituents above their 200-day averages, and new-high/new-low breadth remain disconnected. Reconstructing these from hundreds of symbols via yfinance would create large, repeated automated downloads from an unofficial Yahoo Finance client, with rate-limit and Yahoo terms-of-use risk. No constituent history is automatically downloaded.
 - Earnings revisions remain unconnected because they are commercial. CNN Fear & Greed remains link-only.
 - This product uses the FRED® API but is not endorsed or certified by the Federal Reserve Bank of St. Louis.
 
@@ -70,3 +70,11 @@ Barchartの履歴CSVはプランによっては使えないため、当日の終
 - キー: GitHub Secrets に `GEMINI_API_KEY` を登録 (ローカルは `.env`)。モデルは `GEMINI_MODEL` (既定 `gemini-3.8-flash`、失敗時 `gemini-2.5-flash`)。キー未設定/API失敗時は「未生成」表示になり、他の表示には影響しません。入力が前回と同一なら再生成しません。
 - 公開版 (`insights.json`) は再配布制限指標を入力にも出力にも含めません。ローカル版 (`python insights.py --local`) は `macro.local.json` から `insights.local.json` (gitignore) を生成します。
 - 注意: Gemini API の無料枠では入力が Google の製品改善に使われ得ます。制限データを含むローカル分析には課金済みキーを推奨します。
+
+
+### ??(A/D)??? ??CSV (??????)
+?????????????????????`local_data/ad_issues.csv` (gitignore??????? `AD_ISSUES_CSV` ????) ???? advancing/declining issues ????????????? (`macro.json`/`insights.json`) ????????????????????????
+- ??: ???? `date,market,advances,declines[,unchanged]`?`date` ? `YYYY-MM-DD` / `MM/DD/YYYY`?`market` ? `NYSE` / `NASDAQ` ?(????????????)??: `2026-10-02,NYSE,1500,1700`?
+- ????: A/D??? = ?(advances ? declines) ???????(unchanged???????CSV????)???? `AD_MARKET` ???(???? NYSE ????NYSE??????????)???????????????????S&P500???A/D??????????????????
+- ?????: ??????????NYSE/Nasdaq Market Diary?Barchart(`$ADRN`?)?EODData??????????????????/????????????????????????
+- ??????7??????? `stale` ??????????????????????CSV?????????????????
