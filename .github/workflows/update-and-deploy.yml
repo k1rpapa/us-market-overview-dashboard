@@ -1,4 +1,4 @@
-﻿# 日次で指標を取得し、macro.json を更新して GitHub Pages に公開する。
+# 日次で指標を取得し、macro.json を更新して GitHub Pages に公開する。
 name: Update data and deploy Pages
 
 on:
@@ -37,8 +37,8 @@ jobs:
         run: |
           git config user.email "action@github.com"
           git config user.name "GitHub Action Bot"
-          git add macro.json
-          git diff --staged --quiet || (git commit -m "Auto-update macro.json" && git push)
+          git add macro.json insights.json
+          git diff --staged --quiet || (git commit -m "Auto-update macro.json" && git pull --rebase origin main && git push)
 
   deploy:
     needs: update
@@ -57,7 +57,7 @@ jobs:
       - name: Stage public files only
         run: |
           mkdir site
-          cp index.html macro.js styles.css macro.json site/
+          cp index.html macro.js styles.css macro.json insights.json site/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

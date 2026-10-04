@@ -87,3 +87,21 @@ test("prefers local JSON and falls back to public JSON", async () => {
     assert.strictEqual(publicData.local_only, undefined);
     assert.match(calls[1], /^macro\.json/);
 });
+
+test("renderInsightBlock shows text, model, disclaimer and escapes", () => {
+    const html = m.renderInsightBlock("T", { status: "ok", text: "<b>x</b>", model: "m1", generated_at: "2026-01-01T00:00:00Z" }, { disclaimer: "AI生成" });
+    assert.ok(html.includes("&lt;b&gt;"));
+    assert.ok(html.includes("m1") && html.includes("AI生成"));
+});
+
+test("renderInsightBlock falls back to 未生成", () => {
+    assert.ok(m.renderInsightBlock("T", null, null).includes("未生成"));
+    assert.ok(m.renderInsightBlock("T", { status: "unavailable", reason: "キー未設定" }, {}).includes("キー未設定"));
+});
+
+test("loadInsightsData returns null on failure and picks local file", async () => {
+    assert.equal(await m.loadInsightsData(false, async () => { throw new Error("x"); }), null);
+    let url = "";
+    await m.loadInsightsData(true, async (u) => { url = u; return { ok: false }; });
+    assert.ok(url.startsWith("insights.local.json"));
+});

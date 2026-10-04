@@ -1,0 +1,39 @@
+{
+ "generated_at": "2026-10-04T13:19:50Z",
+ "disclaimer": "AI生成・投資助言ではありません。数値は同ダッシュボードの取得値のみに基づきます。",
+ "model": null,
+ "local_only": false,
+ "categories": {
+  "valuation": {
+   "status": "unavailable",
+   "reason": "GEMINI_API_KEY が未設定のため未生成です。",
+   "input_hash": "56e4e4599ef68e4a424fe88b0372abb9e9aef1e82baf2f5037b083570c577138"
+  },
+  "momentum": {
+   "status": "unavailable",
+   "reason": "分析できる取得済みデータがありません。",
+   "input_hash": "adbf0b4324315c54565000367098f4d868b9e85af9f2bc900fb0336ac0c872f2"
+  },
+  "credit": {
+   "status": "unavailable",
+   "reason": "GEMINI_API_KEY が未設定のため未生成です。",
+   "input_hash": "e1efde6e90eacbcc6f8eb9d30afc4e7b0060bee63dad6088650a22a18b2ede4b"
+  },
+  "economy": {
+   "status": "unavailable",
+   "reason": "GEMINI_API_KEY が未設定のため未生成です。",
+   "input_hash": "b142cb44bc3ca67aa3fec056e5f6c0ddcf6cf823942472afd98d9fbe72104513"
+  },
+  "rates": {
+   "status": "unavailable",
+   "reason": "GEMINI_API_KEY が未設定のため未生成です。",
+   "input_hash": "96104e6dc7ef4d882e1c2f1eb213d2c98f40262c63ae7075696dfe4bfa3522da"
+  },
+  "energy": {
+   "status": "unavailable",
+   "reason": "GEMINI_API_KEY が未設定のため未生成です。",
+   "input_hash": "6ef7acb33e6c421066e22a1007a0774d32742096a1243ab403369ad918a75411"
+  }
+ },
+ "summary": null
+}

@@ -110,7 +110,22 @@ function renderIndicatorCard(ind) {
         </article>`;
 }
 
-function renderMacroHtml(data) {
+function renderInsightBlock(title, entry, meta) {
+    const head = `<summary>${escapeHtml(title)}</summary>`;
+    if (!entry || entry.status !== "ok" || !entry.text) {
+        const reason = entry && entry.reason ? `（${escapeHtml(entry.reason)}）` : "";
+        return `<details class="macro-insight macro-insight-empty">${head}` +
+            `<p class="macro-insight-text">未生成${reason}</p></details>`;
+    }
+    const stamp = entry.generated_at || (meta && meta.generated_at) || "不明";
+    const model = entry.model || (meta && meta.model) || "不明";
+    return `<details class="macro-insight">${head}` +
+        `<p class="macro-insight-text">${escapeHtml(entry.text)}</p>` +
+        `<p class="macro-insight-meta">生成: ${escapeHtml(stamp)} ／ モデル: ${escapeHtml(model)} ／ ` +
+        `${escapeHtml((meta && meta.disclaimer) || "AI生成・投資助言ではありません。")}</p></details>`;
+}
+
+function renderMacroHtml(data, insights) {
     const indicators = (data && data.indicators) || [];
     if (indicators.length === 0) {
         return `<p class="macro-message">表示できる指標がありません。</p>`;
@@ -120,13 +135,26 @@ function renderMacroHtml(data) {
     const sections = groups.map(g => {
         const items = indicators.filter(i => i.group === g.id || (g.id === "all" && !known.has(i.group)));
         if (items.length === 0) return "";
-        return `<section class="macro-group"><h3 class="macro-group-title">${escapeHtml(g.name)}</h3>` +
+        const insight = renderInsightBlock(`AIアナリスト分析: ${g.name}`,
+            insights && insights.categories && insights.categories[g.id], insights);
+        return `<section class="macro-group"><h3 class="macro-group-title">${escapeHtml(g.name)}</h3>` + insight +
             `<div class="macro-grid">${items.map(renderIndicatorCard).join("")}</div></section>`;
     }).join("");
     const ok = indicators.filter(i => i.status === "ok").length;
     const summary = `<p class="macro-summary">取得済み ${ok} / ${indicators.length} 指標` +
         `（生成: ${escapeHtml(data.generated_at || "不明")}）。未接続・取得失敗の指標は値を表示していません。総合スコアは算出していません。</p>`;
-    return summary + sections;
+    const overview = renderInsightBlock("AIアナリスト 全体俯瞰", insights && insights.summary, insights);
+    return summary + overview + sections;
+}
+
+async function loadInsightsData(localOnly, fetchImpl = fetch) {
+    try {
+        const name = localOnly ? "insights.local.json" : "insights.json";
+        const response = await fetchImpl(name + "?t=" + Date.now(), { cache: "no-store" });
+        return response && response.ok ? await response.json() : null;
+    } catch (_) {
+        return null;
+    }
 }
 
 let macroLoaded = false;
@@ -137,7 +165,8 @@ async function loadMacro(force = false) {
     el.innerHTML = `<p class="macro-message">指標データを読み込み中...</p>`;
     try {
         const data = await loadMacroData();
-        el.innerHTML = renderMacroHtml(data);
+        const insights = await loadInsightsData(Boolean(data.local_only));
+        el.innerHTML = renderMacroHtml(data, insights);
         if (data.local_only) {
             el.insertAdjacentHTML("afterbegin", `<p class="macro-local-notice">ローカル版: 再配布制限のあるデータを含みます。このファイルや画面を公開・共有しないでください。</p>`);
         }
@@ -175,5 +204,6 @@ if (typeof document !== "undefined") {
 
 if (typeof module !== "undefined" && module.exports) {
     module.exports = { escapeHtml, safeUrl, formatValue, formatNumber, percentileLabel,
-        buildSparkline, buildRangeBar, renderIndicatorCard, renderMacroHtml, loadMacroData };
+        buildSparkline, buildRangeBar, renderIndicatorCard, renderMacroHtml, loadMacroData,
+        renderInsightBlock, loadInsightsData };
 }

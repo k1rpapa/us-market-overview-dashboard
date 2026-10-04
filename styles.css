@@ -237,3 +237,15 @@ h1 { font-size: 1.5rem; font-weight: 800; letter-spacing: -0.02em; }
 }
 .status-restricted { color: var(--text-secondary); border-color: var(--text-secondary); }
 .macro-card.macro-restricted { border-style: dashed; }
+
+.macro-insight {
+    margin: 0 0 0.75rem;
+    padding: 0.6rem 0.8rem;
+    border: 1px solid var(--border-color, #2a2f3a);
+    border-radius: 8px;
+    font-size: 0.85rem;
+    line-height: 1.6;
+}
+.macro-insight summary { cursor: pointer; font-weight: 600; }
+.macro-insight-text { margin-top: 0.4rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.macro-insight-empty .macro-insight-text, .macro-insight-meta { color: var(--text-secondary); font-size: 0.75rem; }
