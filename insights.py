@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from fetch_macro import load_dotenv
 
 PROMPT_VERSION = "1"
-DEFAULT_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
+DEFAULT_MODELS = ["gemini-3.8-flash", "gemini-2.5-flash"]
 ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 DISCLAIMER = "AI生成・投資助言ではありません。数値は同ダッシュボードの取得値のみに基づきます。"
 MIN_HISTORY = 30

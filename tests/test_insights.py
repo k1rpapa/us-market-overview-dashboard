@@ -62,5 +62,17 @@ class T(unittest.TestCase):
         out = I.generate_insights(mk(True), api_key="k", post=post, allow_restricted=True)
         self.assertEqual(out["categories"]["g1"]["status"], "ok")
 
+
+    def test_default_model_fallback_order(self):
+        attempts = []
+        def post(url, body, key):
+            attempts.append(url)
+            if len(attempts) == 1:
+                raise RuntimeError("model unavailable")
+            return {"candidates": [{"content": {"parts": [{"text": "analysis"}]}}]}
+        text, model = I.call_gemini("system", "user", "key", I.DEFAULT_MODELS, post)
+        self.assertEqual(model, "gemini-2.5-flash")
+        self.assertEqual([u.rsplit("/", 1)[-1].split(":", 1)[0] for u in attempts],
+                         ["gemini-3.8-flash", "gemini-2.5-flash"])
 if __name__ == "__main__":
     unittest.main()
