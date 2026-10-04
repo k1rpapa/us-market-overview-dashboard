@@ -1,4 +1,4 @@
-import json
+﻿import json
 import os
 import tempfile
 import unittest
@@ -197,6 +197,37 @@ class GenerateTests(unittest.TestCase):
         self.assertEqual(ids["cape"]["latest"]["date"], "2023-09-01")
         self.assertEqual(ids["erp"]["status"], "stale")
         self.assertEqual(ids["recession_prob"]["status"], "unavailable")
+
+    def test_probit_proxy_matches_nyfed_formula(self):
+        series = fm.recession_probit_proxy([("2026-01-02", 1.0), ("2026-01-30", 3.0), ("2026-02-27", -1.0)])
+        self.assertEqual([d for d, _ in series], ["2026-01-30", "2026-02-27"])
+        self.assertAlmostEqual(series[0][1], 3.6, delta=0.05)
+        self.assertAlmostEqual(series[1][1], 54.0, delta=0.05)
+
+    def test_stale_official_recession_csv_falls_back_to_labeled_proxy(self):
+        data = fm.generate(
+            fred=lambda sid: [("2026-09-01", 1.0), ("2026-09-30", 1.0)] if sid == "T10Y3M" else [],
+            eia=lambda _: [], yf_close=lambda _: [],
+            shiller=lambda: (_ for _ in ()).throw(RuntimeError()),
+            finra=lambda: (_ for _ in ()).throw(RuntimeError()),
+            acm=lambda: (_ for _ in ()).throw(RuntimeError()),
+            cot=lambda _: (_ for _ in ()).throw(RuntimeError()),
+            nyfed_hhdc=lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError()),
+            recession=lambda: [("2017-06-30", 8.11)],
+            cboe=lambda: (_ for _ in ()).throw(RuntimeError()),
+            now=datetime(2026, 10, 1, tzinfo=timezone.utc))
+        item = self.by_id(data)["recession_prob"]
+        self.assertEqual(item["status"], "ok")
+        self.assertEqual(item["latest"]["date"], "2026-09-30")
+        self.assertIn("??", item["name"])
+        self.assertIn("0.6330", item["formula"])
+
+    def test_shiller_page_link_is_extracted(self):
+        html = '<a href="//img1.wsimg.com/blobby/go/x/downloads/y/ie_data.xls?ver=1">xls</a>'
+        self.assertEqual(fm.shiller_workbook_url(html),
+                         "https://img1.wsimg.com/blobby/go/x/downloads/y/ie_data.xls?ver=1")
+        with self.assertRaises(ValueError):
+            fm.shiller_workbook_url("<html></html>")
 
     def test_eia_key_never_written(self):
         os.environ["EIA_API_KEY"] = "TOPSECRETKEY"

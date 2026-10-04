@@ -8,6 +8,7 @@ import argparse
 import calendar
 import io
 import json
+import math
 import os
 import re
 import urllib.parse
@@ -51,7 +52,7 @@ SPECS = [
           "S&P500の株価を過去10年の平均インフレ調整後利益で割った景気循環調整PER。",
           "歴史的レンジの上位ほど長期の割高感が強い局面。",
           "短期の売買タイミング指標ではない。ソース更新停止時は最新観測値が古くなります。",
-          "Robert Shiller (Yale)", "http://www.econ.yale.edu/~shiller/data/ie_data.xls", "月次",
+          "Robert Shiller (shillerdata.com / Yale)", "https://shillerdata.com/", "月次",
           kind="shiller"),
     _spec("erp", "valuation", "株式リスクプレミアム (ERP)",
           "株式の期待リターンが無リスク金利をどれだけ上回るか。",
@@ -232,12 +233,14 @@ def _http_bytes(url, timeout=90):
         return res.read()
 
 
-def fetch_shiller(http_get_bytes=_http_bytes):
+SHILLER_PAGE_URL = "https://shillerdata.com/"
+YALE_SHILLER_URL = "http://www.econ.yale.edu/~shiller/data/ie_data.xls"
+
+
+def parse_shiller_cape(content):
     import xlrd
 
-    book = xlrd.open_workbook(file_contents=http_get_bytes(
-        "http://www.econ.yale.edu/~shiller/data/ie_data.xls"))
-    sheet = book.sheet_by_name("Data")
+    sheet = xlrd.open_workbook(file_contents=content).sheet_by_name("Data")
     headers = [str(v).strip() for v in sheet.row_values(7)]
     cape_col = headers.index("CAPE")
     result = []
@@ -257,6 +260,22 @@ def fetch_shiller(http_get_bytes=_http_bytes):
     if not result:
         raise ValueError("Shiller workbook has no CAPE observations")
     return result
+
+
+def shiller_workbook_url(page_html):
+    match = re.search(r'(?:https:)?//img1\.wsimg\.com/[^"\'\s<>]*?ie_data\.xls[^"\'\s<>]*', page_html)
+    if not match:
+        raise ValueError("Shiller data page has no ie_data.xls link")
+    url = match.group(0).replace("&amp;", "&")
+    return "https:" + url if url.startswith("//") else url
+
+
+def fetch_shiller(http_get_bytes=_http_bytes, http_get=_http_get):
+    """Prefer Shiller's maintained data site; the Yale copy has stopped updating."""
+    try:
+        return parse_shiller_cape(http_get_bytes(shiller_workbook_url(http_get(SHILLER_PAGE_URL))))
+    except Exception:
+        return parse_shiller_cape(http_get_bytes(YALE_SHILLER_URL))
 
 
 def fetch_finra_margin(http_get_bytes=_http_bytes):
@@ -311,6 +330,24 @@ def fetch_nyfed_recession(http_get=_http_get):
             continue
     if not result:
         raise ValueError("NY Fed recession probability CSV has no observations")
+    return result
+
+
+PROBIT_INTERCEPT = -0.5333
+PROBIT_SLOPE = -0.6330
+
+
+def recession_probit_proxy(spread_daily):
+    """Estrella-Mishkin style probit used by the NY Fed: 12-month-ahead probability from the monthly mean 10y-3m spread."""
+    months = {}
+    for date, value in spread_daily:
+        months.setdefault(date[:7], []).append((date, value))
+    result = []
+    for key in sorted(months):
+        points = months[key]
+        spread = sum(v for _, v in points) / len(points)
+        z = PROBIT_INTERCEPT + PROBIT_SLOPE * spread
+        result.append((points[-1][0], round(100 * 0.5 * (1 + math.erf(z / math.sqrt(2))), 2)))
     return result
 
 
@@ -582,6 +619,7 @@ def generate(fred=fetch_fred, eia=fetch_eia, yf_close=_yf_close, now=None, allow
     results = {}
     errors = {}
     hhdc_content_cache = {}
+    proxies = {}
 
     def fred_cached(sid):
         if sid not in cache:
@@ -608,7 +646,17 @@ def generate(fred=fetch_fred, eia=fetch_eia, yf_close=_yf_close, now=None, allow
             elif kind == "acm":
                 results[spec["id"]] = acm()
             elif kind == "nyfed_recession":
-                results[spec["id"]] = recession()
+                official = None
+                try:
+                    official = recession()
+                except Exception:
+                    pass
+                limit = (now or datetime.now(timezone.utc)).date()
+                if official and (limit - datetime.strptime(official[-1][0], "%Y-%m-%d").date()).days <= 180:
+                    results[spec["id"]] = official
+                else:
+                    results[spec["id"]] = recession_probit_proxy(fred_cached("T10Y3M"))
+                    proxies[spec["id"]] = True
             elif kind == "cboe_put_call":
                 results[spec["id"]] = cboe()
             elif kind == "cftc":
@@ -639,6 +687,15 @@ def generate(fred=fetch_fred, eia=fetch_eia, yf_close=_yf_close, now=None, allow
     indicators = [build_indicator(s, results.get(s["id"]), errors.get(s["id"]), allow_restricted)
                   for s in SPECS]
     for item in indicators:
+        if proxies.get(item["id"]) and item.get("latest"):
+            item["name"] += " (??: ??probit??)"
+            item["source"] = "FRED T10Y3M (Fed H.15) ?????? / ??NY???????"
+            item["source_url"] = FRED_URL + "T10Y3M"
+            item["formula"] = "??(%) = 100 ? ?(?0.5333 ? 0.6330 ? 10??3??????????%)???????????????"
+            item["caution"] = ("NY????CSV??????????????????????????????????"
+                               "??CSV?????(?2017-06)?????????0.07????????????????"
+                               "???????????????????12?????????????????? " + item["caution"])
+            item["frequency"] = "?????????"
         if item.get("latest") and item["id"] in ("cape", "erp", "recession_prob", "put_call"):
             try:
                 observation = datetime.strptime(item["latest"]["date"], "%Y-%m-%d").date()
