@@ -46,3 +46,12 @@ python -m http.server 8000 --bind 0.0.0.0 # http://localhost:8000
 - A/D line, the share of S&P constituents above their 200-day averages, and new-high/new-low breadth remain disconnected. Reconstructing these from hundreds of symbols via yfinance would create large, repeated automated downloads from an unofficial Yahoo Finance client, with rate-limit and Yahoo terms-of-use risk. No constituent history is automatically downloaded.
 - Earnings revisions remain unconnected because they are commercial. CNN Fear & Greed remains link-only.
 - This product uses the FRED® API but is not endorsed or certified by the Federal Reserve Bank of St. Louis.
+
+### Barchart $CPCS (Put/Call) 手動CSV取込 (ローカル専用)
+Cboeの公開CSVが2019年で止まっているため、Barchart会員が手動でダウンロードしたCSVをローカル版のPut/Callに使えます。公開版 (`macro.json`) には含まれません。
+1. Barchartにログインし、`$CPCS` (Equity Put/Call Ratio) の Historical Download で日次CSVをダウンロードします (会員プランごとの取得期間・回数制限に従ってください)。
+2. `local_data/barchart_cpcs.csv` として保存します (`local_data/` はgitignore済み。別の場所なら環境変数 `BARCHART_CPCS_CSV` にパスを指定)。
+3. `python fetch_macro.py --local` を実行すると、`macro.local.json` のPut/Callカードがこのファイルを優先して表示します。ファイルがなければ従来のCboe CSV(古い場合はstale表示)にフォールバックします。
+- 期待する形式: ヘッダー行に `Time`(または`Date`)と `Last`(または`Close`)列を含むCSV。日付は `YYYY-MM-DD` または `MM/DD/YYYY`。末尾の `Downloaded from Barchart.com...` 等の行は無視されます。
+- `$CPCS` は株式(エクイティ)のみの比率で、Cboe全体比率とは水準が異なります。カードにもその旨を表示します。更新するには定期的にCSVを再ダウンロードしてください。
+- Barchartのウェブサイトのスクレイピングや自動ログインは行いません。自動取得を行う場合は、契約プランにBarchart OnDemand等のAPI権限とデータ保存範囲が含まれるか確認が必要です。

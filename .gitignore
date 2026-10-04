@@ -3,3 +3,4 @@ macro.local.json
 __pycache__/
 *.py[cod]
 .venv/
+local_data/

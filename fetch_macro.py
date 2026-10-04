@@ -351,6 +351,52 @@ def recession_probit_proxy(spread_daily):
     return result
 
 
+BARCHART_CSV_DEFAULT = os.path.join("local_data", "barchart_cpcs.csv")
+
+
+def parse_barchart_csv(text):
+    """Parse a manually downloaded Barchart historical CSV (e.g. $CPCS). Footer/blank lines are skipped."""
+    rows = list(csv.reader(io.StringIO(text.lstrip("\ufeff"))))
+    header = None
+    for index, row in enumerate(rows):
+        names = [c.strip().lower() for c in row]
+        date_col = next((i for i, n in enumerate(names) if n in ("time", "date")), None)
+        value_col = next((i for i, n in enumerate(names) if n in ("last", "close", "latest")), None)
+        if date_col is not None and value_col is not None:
+            header = (index, date_col, value_col)
+            break
+    if header is None:
+        raise ValueError("Barchart CSV needs Time/Date and Last/Close columns")
+    result = []
+    for row in rows[header[0] + 1:]:
+        try:
+            raw_date = row[header[1]].strip()
+            for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y"):
+                try:
+                    date = datetime.strptime(raw_date, fmt).strftime("%Y-%m-%d")
+                    break
+                except ValueError:
+                    date = None
+            if date is None:
+                continue
+            result.append((date, float(row[header[2]].replace(",", ""))))
+        except (IndexError, ValueError):
+            continue
+    if not result:
+        raise ValueError("Barchart CSV has no observations")
+    return sorted(set(result))
+
+
+def read_barchart_cpcs(path=None):
+    """Return the manually imported series, or None when no file was placed locally."""
+    path = path or os.environ.get("BARCHART_CPCS_CSV") or os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), BARCHART_CSV_DEFAULT)
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8-sig") as handle:
+        return parse_barchart_csv(handle.read())
+
+
 def fetch_cboe_put_call(http_get=_http_get):
     url = "https://cdn.cboe.com/resources/options/volume_and_call_put_ratios/totalpc.csv"
     rows = csv.reader(io.StringIO(http_get(url, timeout=60)))
@@ -614,7 +660,7 @@ def build_indicator(spec, series=None, error=None, allow_restricted=False):
 def generate(fred=fetch_fred, eia=fetch_eia, yf_close=_yf_close, now=None, allow_restricted=False,
              shiller=fetch_shiller, finra=fetch_finra_margin, acm=fetch_acm, cot=fetch_cot,
              nyfed_hhdc=fetch_nyfed_hhdc, recession=fetch_nyfed_recession,
-             cboe=fetch_cboe_put_call):
+             cboe=fetch_cboe_put_call, barchart=read_barchart_cpcs):
     cache = {}
     results = {}
     errors = {}
@@ -658,7 +704,12 @@ def generate(fred=fetch_fred, eia=fetch_eia, yf_close=_yf_close, now=None, allow
                     results[spec["id"]] = recession_probit_proxy(fred_cached("T10Y3M"))
                     proxies[spec["id"]] = True
             elif kind == "cboe_put_call":
-                results[spec["id"]] = cboe()
+                manual = barchart()
+                if manual:
+                    results[spec["id"]] = manual
+                    proxies[spec["id"] + "_barchart"] = True
+                else:
+                    results[spec["id"]] = cboe()
             elif kind == "cftc":
                 results[spec["id"]] = cot(p)
             elif kind == "nyfed_hhdc":
@@ -696,6 +747,14 @@ def generate(fred=fetch_fred, eia=fetch_eia, yf_close=_yf_close, now=None, allow
                                "??CSV?????(?2017-06)?????????0.07????????????????"
                                "???????????????????12?????????????????? " + item["caution"])
             item["frequency"] = "?????????"
+        if proxies.get(item["id"] + "_barchart") and item.get("latest"):
+            item["name"] = "???/????? (Barchart $CPCS ??CSV)"
+            item["definition"] = "Barchart???(?????)????? ???/???????? $CPCS??????????"
+            item["source"] = "Barchart $CPCS (?????????????CSV???????)"
+            item["source_url"] = "https://www.barchart.com/stocks/quotes/$CPCS/historical-download"
+            item["caution"] = ("Barchart????????????????CSV???????????????????????????? "
+                               + item["caution"])
+            item["frequency"] = "?? (????)"
         if item.get("latest") and item["id"] in ("cape", "erp", "recession_prob", "put_call"):
             try:
                 observation = datetime.strptime(item["latest"]["date"], "%Y-%m-%d").date()

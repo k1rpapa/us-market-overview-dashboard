@@ -229,6 +229,27 @@ class GenerateTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             fm.shiller_workbook_url("<html></html>")
 
+    def test_barchart_csv_parsing_and_local_priority(self):
+        text = ('Time,Open,High,Low,Last,Change,%Change,Volume\n'
+                '2026-10-01,0.6,0.7,0.5,0.62,0,0,0\n10/02/2026,0.6,0.7,0.5,"0.58",0,0,0\n'
+                'Downloaded from Barchart.com as of 10-03-2026\n')
+        self.assertEqual(fm.parse_barchart_csv(text), [("2026-10-01", 0.62), ("2026-10-02", 0.58)])
+        with self.assertRaises(ValueError):
+            fm.parse_barchart_csv("foo,bar\n1,2\n")
+        self.assertIsNone(fm.read_barchart_cpcs(os.path.join(tempfile.gettempdir(), "missing-cpcs.csv")))
+        series = fm.parse_barchart_csv(text)
+        kwargs = dict(fred=lambda s: [], eia=lambda _: [], yf_close=lambda _: [],
+                      shiller=lambda: [], finra=lambda: [], acm=lambda: [], cot=lambda _: [],
+                      nyfed_hhdc=lambda *_a, **_k: [], recession=lambda: [],
+                      cboe=lambda: [("2019-10-04", 1.05)], barchart=lambda: series,
+                      now=datetime(2026, 10, 3, tzinfo=timezone.utc))
+        local = self.by_id(fm.generate(allow_restricted=True, **kwargs))["put_call"]
+        self.assertEqual(local["latest"]["date"], "2026-10-02")
+        self.assertIn("$CPCS", local["name"])
+        public = self.by_id(fm.generate(allow_restricted=False, **kwargs))["put_call"]
+        self.assertEqual(public["status"], "restricted")
+        self.assertNotIn("latest", public)
+
     def test_eia_key_never_written(self):
         os.environ["EIA_API_KEY"] = "TOPSECRETKEY"
         try:
