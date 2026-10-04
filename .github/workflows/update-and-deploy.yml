@@ -33,6 +33,10 @@ jobs:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
         run: python fetch_macro.py
+      - name: Generate AI insights (skips gracefully without key)
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python insights.py
       - name: Commit updated data
         run: |
           git config user.email "action@github.com"
