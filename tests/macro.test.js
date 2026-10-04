@@ -42,6 +42,16 @@ test("pending card shows reason, no value, and unsafe URL neutralised", () => {
     assert.doesNotMatch(html, /javascript:/);
 });
 
+test("stale card preserves its last observed value and warns users", () => {
+    const html = m.renderIndicatorCard({
+        ...okInd, status: "stale", reason: "最終観測が古いです。", latest: { date: "2017-06-30", value: 8.11 }
+    });
+    assert.match(html, /8\.11%/);
+    assert.match(html, /2017-06-30/);
+    assert.match(html, /最終観測が古いです/);
+    assert.match(html, /最終観測が古い/);
+});
+
 test("renderMacroHtml empty state, grouping and no composite score", () => {
     assert.match(m.renderMacroHtml({ indicators: [] }), /表示できる指標がありません/);
     const html = m.renderMacroHtml({ generated_at: "T", groups: [{ id: "credit", name: "信用" }, { id: "valuation", name: "割高感" }], indicators: [okInd, pending] });

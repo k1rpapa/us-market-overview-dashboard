@@ -8,7 +8,7 @@
 
 ## 開発
 ```
-pip install yfinance pandas
+pip install -r requirements.txt
 python fetch_macro.py          # macro.json を生成
 python fetch_macro.py --local  # macro.local.json を生成(ローカル限定データ含む)
 python -m unittest discover -s tests
@@ -18,7 +18,7 @@ python -m http.server 8000 --bind 0.0.0.0 # http://localhost:8000
 
 ### ローカル版 (再配布制限データを含む)
 1. `.env.example` を `.env` にコピーし、必要なら手元で取得した `FRED_API_KEY` と `EIA_API_KEY` を設定します。`.env` はGit管理対象外です。キーがなくても公開CSVで取得を試みますが、FRED公式APIやEIA系列はキー設定を推奨します。
-2. 仮想環境を作成して依存を入れます: `python -m venv .venv`、`.venv\Scripts\Activate.ps1`、`pip install yfinance pandas`。
+2. 仮想環境を作成して依存を入れます: `python -m venv .venv`、`.venv\Scripts\Activate.ps1`、`pip install -r requirements.txt`。
 3. `python fetch_macro.py --local` を実行すると、同じフォルダーに `macro.local.json` を生成します。通常の `python fetch_macro.py` は制限データを除いた公開用 `macro.json` を出力します。
 4. `python -m http.server 8000 --bind 0.0.0.0` を起動し、このPCの `http://localhost:8000` を開きます。ローカルJSONが存在すると優先表示し、無ければ `macro.json` にフォールバックします。
 5. スマートフォンからはPCと同じWi-Fiに接続し、PCのLAN IPv4アドレス（Windowsで `ipconfig` を実行して確認）を使って `http://<PCのIPv4アドレス>:8000` を開きます。Windows Defender FirewallでPythonのプライベートネットワーク受信を許可してください。モバイル表示中もローカルJSONの存在時はローカル版が優先されます。
@@ -38,4 +38,10 @@ python -m http.server 8000 --bind 0.0.0.0 # http://localhost:8000
 
 ## データの扱い
 - FRED経由の系列は出典(FRED/元機関)を各カードに表示。ICE BofA社債OASなど第三者の再配布制限があるデータと、Yahoo Finance由来の指数・ETF系列(S&P500、SPY/RSP、VIX)は、公開JSONに値・履歴を含めず「再配布制限」と表示します。
+- 公開取得を接続した系列: Shiller CAPE (Yale XLS), CAPE earnings-yield minus real-yield proxy (ERP), FINRA margin debit balances, CFTC S&P 500 leveraged-fund net positions/open interest, NY Fed ACM 10-year term premium, NY Fed 12-month recession probability, NY Fed/Equifax credit-card and auto-loan flows into 30+ and 90+ day delinquency. NY Fed/Census core capital goods orders and FRB SLOOS remain connected through FRED.
+- CAPE source workbook currently ends at 2023-09. It is shown with its last observation date and a stale warning, not represented as a current market reading. ERP is similarly stale because it depends on CAPE.
+- NY Fed's recession-probability CSV currently ends at 2017-06 and Cboe's downloadable total put/call CSV currently ends in 2019. Both remain visible only with their actual last observation date and a stale warning; they are not presented as current readings. The Cboe series is local-only under its website terms.
+- The Cboe total put/call CSV is available and parsed in local mode only; Cboe states its use is subject to Cboe Website Terms and Conditions, so its values/history are excluded from the public JSON.
+- A/D line, the share of S&P constituents above their 200-day averages, and new-high/new-low breadth remain disconnected. Reconstructing these from hundreds of symbols via yfinance would create large, repeated automated downloads from an unofficial Yahoo Finance client, with rate-limit and Yahoo terms-of-use risk. No constituent history is automatically downloaded.
+- Earnings revisions remain unconnected because they are commercial. CNN Fear & Greed remains link-only.
 - This product uses the FRED® API but is not endorsed or certified by the Federal Reserve Bank of St. Louis.

@@ -38,8 +38,14 @@ class GenerateTests(unittest.TestCase):
         def no_yf(_):
             raise RuntimeError("down")
 
+        def unavailable(*_args, **_kwargs):
+            raise RuntimeError("offline fixture")
+
         return fm.generate(fred=fred, eia=eia or no_eia, yf_close=yf_close or no_yf,
-                           now=datetime(2026, 1, 1, tzinfo=timezone.utc))
+                           now=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                           shiller=unavailable, finra=unavailable, acm=unavailable,
+                           cot=unavailable, nyfed_hhdc=unavailable, recession=unavailable,
+                           cboe=unavailable)
 
     def by_id(self, data):
         return {i["id"]: i for i in data["indicators"]}
@@ -55,7 +61,7 @@ class GenerateTests(unittest.TestCase):
             self.assertNotIn("latest", ind)
             self.assertNotIn("history", ind)
         self.assertEqual(ids["nfci"]["status"], "unavailable")
-        self.assertEqual(ids["cape"]["status"], "pending")
+        self.assertEqual(ids["cape"]["status"], "unavailable")
         self.assertEqual(ids["fear_greed"]["status"], "link_only")
         self.assertEqual(ids["distillate_stocks"]["status"], "unavailable")
         self.assertEqual(ids["diesel_crude_spread"]["status"], "unavailable")
@@ -82,12 +88,41 @@ class GenerateTests(unittest.TestCase):
         def yf_close(_):
             return [(f"2024-{i:03d}", float(i + 100)) for i in range(220)]
 
-        ids = self.by_id(fm.generate(fred=fred, eia=lambda _: [], yf_close=yf_close, allow_restricted=True))
+        def unavailable(*_args, **_kwargs):
+            raise RuntimeError("offline fixture")
+
+        ids = self.by_id(fm.generate(fred=fred, eia=lambda _: [], yf_close=yf_close, allow_restricted=True,
+                                     shiller=unavailable, finra=unavailable, acm=unavailable,
+                                     cot=unavailable, nyfed_hhdc=unavailable, recession=unavailable,
+                                     cboe=lambda: [("2026-01-01", 0.9)],
+                                     now=datetime(2026, 1, 1, tzinfo=timezone.utc)))
         for rid in ("hy_oas", "ig_oas", "sp500_200d", "cap_vs_equal", "vix_curve"):
             self.assertEqual(ids[rid]["status"], "ok")
             self.assertIn("latest", ids[rid])
             self.assertIn("history", ids[rid])
         self.assertIn("ローカル専用", ids["hy_oas"]["caution"])
+        self.assertEqual(ids["put_call"]["status"], "ok")
+
+    def test_new_public_sources_are_wired(self):
+        series = [("2026-08-01", 2.0), ("2026-08-31", 2.5)]
+        data = fm.generate(
+            fred=lambda sid: series,
+            eia=lambda _: series,
+            yf_close=lambda _: [(f"2026-{i:03d}", float(i + 100)) for i in range(220)],
+            shiller=lambda: [("2026-08-01", 25.0)],
+            finra=lambda: [("2026-08-01", 100000.0)],
+            acm=lambda: [("2026-08-31", 0.5)],
+            cot=lambda _: [("2026-08-25", 12.5)],
+            nyfed_hhdc=lambda p, **_: [("2026-04-01", 8.0 if p["column"] == "CC" else 7.0)],
+            recession=lambda: [("2026-08-31", 5.0)],
+            cboe=lambda: [("2026-08-31", 0.9)],
+            now=datetime(2026, 10, 1, tzinfo=timezone.utc))
+        ids = self.by_id(data)
+        for indicator_id in ("cape", "erp", "margin_debt", "cot_sp500", "term_premium",
+                             "recession_prob", "card_delinq", "auto_delinq",
+                             "card_serious_delinq", "auto_serious_delinq"):
+            self.assertEqual(ids[indicator_id]["status"], "ok", indicator_id)
+            self.assertIn("latest", ids[indicator_id])
 
     def test_dotenv_does_not_override_existing_environment(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -100,6 +135,68 @@ class GenerateTests(unittest.TestCase):
                 self.assertEqual(os.environ["DASH_TEST_ENV"], "from-process")
             finally:
                 del os.environ["DASH_TEST_ENV"]
+
+    def test_cape_erp_monthly_join(self):
+        cape = [("2024-01-01", 25.0), ("2024-02-01", 20.0)]
+        real_yield = [("2024-01-12", 1.5), ("2024-01-31", 2.0), ("2024-02-29", 2.5)]
+        self.assertEqual(fm.cape_erp(cape, real_yield), [("2024-01-01", 2.0), ("2024-02-01", 2.5)])
+
+    def test_parse_nyfed_hhdc_quarterly_series(self):
+        from openpyxl import Workbook
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Page 13 Data"
+        sheet.append(["New Delinquent Balances"])
+        sheet.append(["Percent"])
+        sheet.append(["Return"])
+        sheet.append([None, "AUTO", "CC"])
+        sheet.append(["26:Q1", 7.72, 8.61])
+        sheet.append(["26:Q2", 7.87, 8.69])
+        stream = tempfile.SpooledTemporaryFile()
+        workbook.save(stream)
+        stream.seek(0)
+        data = stream.read()
+        self.assertEqual(fm.parse_nyfed_hhdc_xlsx(data, "Page 13 Data", "CC"),
+                         [("2026-03-31", 8.61), ("2026-06-30", 8.69)])
+
+    def test_cot_net_leveraged_position_as_percent_of_open_interest(self):
+        payload = json.dumps([{
+            "report_date_as_yyyy_mm_dd": "2026-09-29T00:00:00.000",
+            "open_interest_all": "1000",
+            "lev_money_positions_long": "350",
+            "lev_money_positions_short": "450",
+        }])
+        series = fm.fetch_cot({"market": "S&P 500 Consolidated"}, http_get=lambda *_a, **_k: payload)
+        self.assertEqual(series, [("2026-09-29", -10.0)])
+
+    def test_nyfed_recession_probability_parses_centuries_and_percent(self):
+        payload = "Date,Rec_prob\n31-May-61,12.35%\n31-Aug-26,5.80%\n"
+        series = fm.fetch_nyfed_recession(http_get=lambda *_a, **_k: payload)
+        self.assertEqual(series, [("1961-05-31", 12.35), ("2026-08-31", 5.8)])
+
+    def test_cboe_put_call_csv_skips_disclaimer_and_parses_history(self):
+        payload = ("Disclaimer line,,,,\n, PRODUCT: TOTAL,,EXCHANGE: Cboe,\n"
+                   "DATE,CALLS,PUTS,TOTAL,P/C Ratio\n"
+                   "11/1/2006,1401036,1271445,2672481,0.91\n")
+        series = fm.fetch_cboe_put_call(http_get=lambda *_a, **_k: payload)
+        self.assertEqual(series, [("2006-11-01", 0.91)])
+
+    def test_monthly_cape_is_marked_stale_but_keeps_observation(self):
+        data = fm.generate(
+            fred=lambda sid: [("2023-09-29", 2.0)] if sid == "DFII10" else (_ for _ in ()).throw(RuntimeError()),
+            eia=lambda _: [], yf_close=lambda _: [], shiller=lambda: [("2023-09-01", 30.0)],
+            finra=lambda: (_ for _ in ()).throw(RuntimeError()),
+            acm=lambda: (_ for _ in ()).throw(RuntimeError()),
+            cot=lambda _: (_ for _ in ()).throw(RuntimeError()),
+            nyfed_hhdc=lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError()),
+            recession=lambda: (_ for _ in ()).throw(RuntimeError()),
+            cboe=lambda: (_ for _ in ()).throw(RuntimeError()),
+            now=datetime(2026, 10, 1, tzinfo=timezone.utc))
+        ids = self.by_id(data)
+        self.assertEqual(ids["cape"]["status"], "stale")
+        self.assertEqual(ids["cape"]["latest"]["date"], "2023-09-01")
+        self.assertEqual(ids["erp"]["status"], "stale")
+        self.assertEqual(ids["recession_prob"]["status"], "unavailable")
 
     def test_eia_key_never_written(self):
         os.environ["EIA_API_KEY"] = "TOPSECRETKEY"
@@ -117,8 +214,9 @@ class GenerateTests(unittest.TestCase):
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
         for ind in data["indicators"]:
-            self.assertIn(ind["status"], ("ok", "pending", "link_only", "unavailable", "restricted"))
-            self.assertEqual(ind["status"] == "ok", "latest" in ind)
+            self.assertIn(ind["status"], ("ok", "stale", "pending", "link_only", "unavailable", "restricted"))
+            self.assertIn(ind["status"], ("ok", "stale") if "latest" in ind else
+                          ("pending", "link_only", "unavailable", "restricted"))
             self.assertTrue(ind["source"] and ind["definition"] and ind["frequency"])
         by_id = {ind["id"]: ind for ind in data["indicators"]}
         for indicator_id in ("hy_oas", "ig_oas", "sp500_200d", "cap_vs_equal", "vix_curve"):

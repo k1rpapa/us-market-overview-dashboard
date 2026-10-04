@@ -140,6 +140,8 @@ h1 { font-size: 1.5rem; font-weight: 800; letter-spacing: -0.02em; }
 .status-ok { color: var(--color-real); border-color: var(--color-real); }
 .status-unavailable { color: var(--color-escape); border-color: var(--color-escape); }
 .status-pending, .status-link_only { color: var(--color-short); border-color: var(--color-short); }
+.status-stale { color: var(--color-short); border-color: var(--color-short); }
+.macro-card.macro-stale { border-color: rgba(245, 158, 11, 0.5); }
 
 .macro-value {
     font-family: var(--font-mono);

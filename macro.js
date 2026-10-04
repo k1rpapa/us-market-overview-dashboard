@@ -6,7 +6,8 @@ const MACRO_STATUS_LABELS = {
     pending: "未接続",
     link_only: "リンクのみ",
     unavailable: "取得失敗",
-    restricted: "再配布制限"
+    restricted: "再配布制限",
+    stale: "最終観測が古い"
 };
 
 function escapeHtml(value) {
@@ -70,11 +71,12 @@ function buildRangeBar(stats, latestValue) {
 function renderIndicatorCard(ind) {
     const status = ind.status in MACRO_STATUS_LABELS ? ind.status : "unavailable";
     let body;
-    if (status === "ok" && ind.latest) {
+    if ((status === "ok" || status === "stale") && ind.latest) {
         const s = ind.stats || {};
         body = `
             <div class="macro-value">${escapeHtml(formatValue(ind.latest.value, ind.unit))}</div>
             <div class="macro-asof">最新観測日: ${escapeHtml(ind.latest.date)} ／ ${escapeHtml(ind.frequency)}</div>
+            ${status === "stale" ? `<div class="macro-unavailable">${escapeHtml(ind.reason)}</div>` : ""}
             <div class="macro-spark">${buildSparkline(ind.history)}</div>
             ${buildRangeBar(s, ind.latest.value)}
             <div class="macro-stats">歴史的位置: <strong>${escapeHtml(percentileLabel(s.percentile))}</strong>

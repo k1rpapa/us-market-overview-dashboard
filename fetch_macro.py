@@ -5,9 +5,11 @@
 """
 import csv
 import argparse
+import calendar
 import io
 import json
 import os
+import re
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
@@ -48,16 +50,17 @@ SPECS = [
     _spec("cape", "valuation", "Shiller CAPE",
           "S&P500の株価を過去10年の平均インフレ調整後利益で割った景気循環調整PER。",
           "歴史的レンジの上位ほど長期の割高感が強い局面。",
-          "短期の売買タイミング指標ではない。会計基準の変化で過去比較にズレが出る。",
-          "Robert Shiller (Yale)", "http://www.econ.yale.edu/~shiller/data.htm", "月次",
-          reason="公式配布はExcelで安定したAPIがないため未接続。"),
+          "短期の売買タイミング指標ではない。ソース更新停止時は最新観測値が古くなります。",
+          "Robert Shiller (Yale)", "http://www.econ.yale.edu/~shiller/data/ie_data.xls", "月次",
+          kind="shiller"),
     _spec("erp", "valuation", "株式リスクプレミアム (ERP)",
           "株式の期待リターンが無リスク金利をどれだけ上回るか。",
           "低いほど株式の上乗せ報酬が薄い。",
-          "利益の定義(予想/実績/CAPE)で値が大きく変わる。",
+          "CAPEを使った長期的な簡易代理値で、将来リターン予測や一般的なフォワードERPとは異なる。",
           "FRED (DFII10) + CAPE", FRED_URL + "DFII10", "日次/月次", unit="%",
-          formula="ERP = 1 / CAPE − 実質10年金利(DFII10)。CAPE接続後に算出。",
-          reason="CAPE未接続のため算出保留。"),
+          formula="ERP代理値(%) = 100 / Shiller CAPE − 実質10年金利 DFII10(%)。CAPE観測月内の最終実質金利を使用。",
+          kind="derived", params={"left": "cape", "right": "real_yield", "method": "cape_erp"},
+          reason="CAPE・実質金利が取得できない場合は算出されません。"),
     _spec("eps_revision", "valuation", "S&P500 利益予想修正幅",
           "アナリストの1株利益予想が上方/下方どちらへ修正されているかの比率。",
           "上方修正優勢なら利益モメンタムが改善。",
@@ -110,9 +113,15 @@ SPECS = [
           kind="fred", params={"series": "NFCI"}),
     _spec("margin_debt", "credit", "米国マージン残高", "証券会社の信用取引の借入残高。",
           "急増はレバレッジ過熱、急減は強制決済局面の兆候。",
-          "月次で公表が遅れる。名目値なので株価水準との比較が必要。",
+          "月次で公表が遅れる。名目値なので株価水準との比較が必要。FINRAは月次数値が報告手法変更の影響を受ける場合があると注意喚起。",
           "FINRA", "https://www.finra.org/rules-guidance/key-topics/margin-accounts/margin-statistics",
-          "月次", reason="公式はWebページ掲載のみでAPIがなく未接続。"),
+          "月次", unit="$M", kind="finra"),
+    _spec("cot_sp500", "credit", "CFTC S&P500 先物レバレッジドファンドのネットポジション",
+          "CFTC Traders in Financial Futures における S&P 500 Consolidated のレバレッジドファンド買建−売建を建玉残高で割った比率。",
+          "正はネットロング、負はネットショート。極端な値はポジションの偏りを示す。",
+          "火曜時点の建玉を金曜公表。先物のみで現物/オプションや全市場のポジションではない。",
+          "CFTC Public Reporting Environment", "https://publicreporting.cftc.gov/", "週次", "% OI",
+          kind="cftc", params={"market": "S&P 500 Consolidated"}),
     _spec("fear_greed", "credit", "CNN Fear & Greed",
           "7つの市場指標を合成したセンチメント指数。",
           "極端な恐怖/強欲は逆張りの材料にされることがある。",
@@ -121,9 +130,9 @@ SPECS = [
           reason="公式の取得APIが確認できないため未接続。リンク先で確認。"),
     _spec("put_call", "credit", "プット/コール比率", "オプション取引のプット出来高÷コール出来高。",
           "高いほど弱気/ヘッジ需要が強い。極端値は逆張りの目安。",
-          "ヘッジ目的の取引も含まれる。",
+          "ヘッジ目的の取引も含まれる。Cboe配布ファイルはCboe Webサイト利用規約に従うためローカル版のみ。",
           "Cboe", "https://www.cboe.com/us/options/market_statistics/daily/", "日次",
-          reason="公式CSVの安定した取得手段を確認できず未接続。"),
+          unit="比", kind="cboe_put_call", restricted=True),
     _spec("vix_curve", "credit", "VIX先物カーブ (近似: VIX/VIX3M)",
           "30日物VIXと3か月物VIX3Mの比。",
           "1超(バックワーデーション)は短期の警戒が強い。1未満は通常のコンタンゴ。",
@@ -138,13 +147,37 @@ SPECS = [
           kind="fred", params={"series": "T10Y3M"}),
     _spec("recession_prob", "economy", "NY連銀 後退確率", "イールドカーブから推計した12か月先の景気後退確率。",
           "高いほど逆イールド起点の後退リスクが高いとモデルが示す。",
-          "単一モデルによる推計。", "NY Fed", "https://www.newyorkfed.org/research/capital_markets/ycfaq",
-          "月次", reason="公式はExcel配布でFREDにも未掲載のため未接続。"),
-    _spec("card_delinq", "economy", "クレジットカード延滞率 (代理指標)",
-          "商業銀行のカードローン延滞率。NY連銀の「延滞移行率」の代理で、定義は異なる。",
-          "上昇は家計の返済余力の低下。", "移行率ではなく延滞残高比率。自動車ローンは未接続。",
-          "Fed via FRED", FRED_URL + "DRCCLACBS", "四半期", "%",
-          kind="fred", params={"series": "DRCCLACBS"}),
+          "単一モデルによる推計。10年−3か月スプレッドを使い、景気後退の時期を確定する予測ではない。",
+          "NY Fed", "https://www.newyorkfed.org/research/capital_markets/ycfaq.html", "月次", "%",
+          kind="nyfed_recession"),
+    _spec("card_delinq", "economy", "クレジットカード 30日以上延滞へのフロー",
+          "NY連銀/Equifax Household Debt and Credit Report の新規30日以上延滞残高の割合。",
+          "上昇は家計の返済余力低下や延滞の広がりを示す。",
+          "延滞への残高フローで、カード利用者個人の延滞確率ではない。",
+          "NY Fed Consumer Credit Panel/Equifax",
+          "https://www.newyorkfed.org/microeconomics/databank.html", "四半期", "%",
+          kind="nyfed_hhdc", params={"sheet": "Page 13 Data", "column": "CC"}),
+    _spec("auto_delinq", "economy", "自動車ローン 30日以上延滞へのフロー",
+          "NY連銀/Equifax Household Debt and Credit Report の新規30日以上延滞残高の割合。",
+          "上昇は家計の返済余力低下や延滞の広がりを示す。",
+          "延滞への残高フローで、借り手個人の延滞確率ではない。",
+          "NY Fed Consumer Credit Panel/Equifax",
+          "https://www.newyorkfed.org/microeconomics/databank.html", "四半期", "%",
+          kind="nyfed_hhdc", params={"sheet": "Page 13 Data", "column": "AUTO"}),
+    _spec("card_serious_delinq", "economy", "クレジットカード 90日以上延滞へのフロー",
+          "NY連銀/Equifax Household Debt and Credit Report の新規90日以上延滞残高の割合。",
+          "上昇は深刻な家計信用ストレスの拡大を示す。",
+          "延滞への残高フローで、借り手個人の延滞確率ではない。",
+          "NY Fed Consumer Credit Panel/Equifax",
+          "https://www.newyorkfed.org/microeconomics/databank.html", "四半期", "%",
+          kind="nyfed_hhdc", params={"sheet": "Page 14 Data", "column": "CC"}),
+    _spec("auto_serious_delinq", "economy", "自動車ローン 90日以上延滞へのフロー",
+          "NY連銀/Equifax Household Debt and Credit Report の新規90日以上延滞残高の割合。",
+          "上昇は深刻な家計信用ストレスの拡大を示す。",
+          "延滞への残高フローで、借り手個人の延滞確率ではない。",
+          "NY Fed Consumer Credit Panel/Equifax",
+          "https://www.newyorkfed.org/microeconomics/databank.html", "四半期", "%",
+          kind="nyfed_hhdc", params={"sheet": "Page 14 Data", "column": "AUTO"}),
     _spec("sloos", "economy", "SLOOS 消費者貸出基準 (カード)",
           "銀行がカードローン基準を厳格化したと答えた割合−緩和した割合(ネット%)。",
           "上昇は信用供給の絞り込み。", "四半期の調査で結果は遅れて公表される。",
@@ -152,7 +185,7 @@ SPECS = [
           kind="fred", params={"series": "DRTSCLCC"}),
     _spec("core_capex", "economy", "コア資本財受注", "非国防資本財(航空機除く)の新規受注。設備投資の先行指標。",
           "減速は企業の投資意欲の低下。", "名目値で月次変動が大きい。",
-          "Census via FRED", FRED_URL + "NEWORDER", "月次", "百万$",
+          "US Census Bureau M3 via FRED", FRED_URL + "NEWORDER", "月次", "百万$",
           kind="fred", params={"series": "NEWORDER"}),
     _spec("real_yield", "rates", "実質金利 (10年TIPS)", "10年物インフレ連動国債の利回り。",
           "上昇は株式の割引率上昇で割高株に逆風。", "TIPSの需給でも変動する。",
@@ -161,9 +194,9 @@ SPECS = [
     _spec("term_premium", "rates", "NY連銀 ACMタームプレミアム",
           "長期債を保有する見返りとして要求される上乗せ利回り(10年)。",
           "上昇は長期金利の上昇が期待ではなく需給/不確実性起因であることを示す。",
-          "モデル推計値で改定される。", "NY Fed",
-          "https://www.newyorkfed.org/research/data_indicators/term-premia-tabs", "日次",
-          reason="公式はExcel配布。FREDのKim-Wrightとは別モデルのため代用せず未接続。"),
+          "モデル推計値で改定される。公開ファイルのTERMYld列は10年ACMタームプレミアム。",
+          "NY Fed", "https://www.newyorkfed.org/research/data_indicators/term-premia-tabs", "月次", "%",
+          kind="acm"),
     _spec("wti", "energy", "WTI原油", "WTI原油スポット価格。",
           "急騰はインフレ・コスト圧力、急落は需要懸念の可能性。", "地政学や在庫要因で大きく振れる。",
           "EIA via FRED", FRED_URL + "DCOILWTICO", "日次", "$/bbl",
@@ -191,6 +224,196 @@ def _http_get(url, timeout=30):
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(req, timeout=timeout) as res:
         return res.read().decode("utf-8")
+
+
+def _http_bytes(url, timeout=90):
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=timeout) as res:
+        return res.read()
+
+
+def fetch_shiller(http_get_bytes=_http_bytes):
+    import xlrd
+
+    book = xlrd.open_workbook(file_contents=http_get_bytes(
+        "http://www.econ.yale.edu/~shiller/data/ie_data.xls"))
+    sheet = book.sheet_by_name("Data")
+    headers = [str(v).strip() for v in sheet.row_values(7)]
+    cape_col = headers.index("CAPE")
+    result = []
+    for row in range(8, sheet.nrows):
+        raw_date = sheet.cell_value(row, 0)
+        raw_value = sheet.cell_value(row, cape_col)
+        try:
+            date_num = float(raw_date)
+            year = int(date_num)
+            month = int(round((date_num - year) * 100))
+            value = float(raw_value)
+            if not 1 <= month <= 12 or value <= 0:
+                continue
+            result.append((f"{year:04d}-{month:02d}-01", value))
+        except (TypeError, ValueError, OverflowError):
+            continue
+    if not result:
+        raise ValueError("Shiller workbook has no CAPE observations")
+    return result
+
+
+def fetch_finra_margin(http_get_bytes=_http_bytes):
+    from openpyxl import load_workbook
+
+    content = http_get_bytes("https://www.finra.org/sites/default/files/2021-03/margin-statistics.xlsx")
+    sheet = load_workbook(io.BytesIO(content), read_only=True, data_only=True).active
+    result = []
+    for row in sheet.iter_rows(values_only=True):
+        if len(row) < 2 or not row[0]:
+            continue
+        raw_date, raw_value = row[0], row[1]
+        if not isinstance(raw_date, str) or not raw_date[:4].isdigit():
+            continue
+        try:
+            year, month = raw_date.split("-")[:2]
+            result.append((f"{int(year):04d}-{int(month):02d}-01", float(raw_value)))
+        except (ValueError, TypeError):
+            continue
+    if not result:
+        raise ValueError("FINRA workbook has no margin balance observations")
+    return sorted(result)
+
+
+def fetch_acm(http_get=_http_get):
+    url = "https://www.newyorkfed.org/medialibrary/media/research/data_indicators/acmPlot_data.csv"
+    reader = csv.DictReader(io.StringIO(http_get(url, timeout=60)))
+    result = []
+    for row in reader:
+        try:
+            date = datetime.strptime(row["RunDates"], "%d-%b-%Y").strftime("%Y-%m-%d")
+            result.append((date, float(row["TERMYld"])))
+        except (KeyError, ValueError, TypeError):
+            continue
+    if not result:
+        raise ValueError("NY Fed ACM CSV has no term premium observations")
+    return result
+
+
+def fetch_nyfed_recession(http_get=_http_get):
+    url = "https://www.newyorkfed.org/medialibrary/media/research/capital_markets/yield/assets/data/yield.csv"
+    result = []
+    for row in csv.DictReader(io.StringIO(http_get(url, timeout=60))):
+        try:
+            day, month, short_year = row["Date"].split("-")
+            year_number = int(short_year)
+            year = 1900 + year_number if year_number >= 60 else 2000 + year_number
+            date = datetime.strptime(f"{day}-{month}-{year}", "%d-%b-%Y").strftime("%Y-%m-%d")
+            value = float(row["Rec_prob"].strip().rstrip("%"))
+            result.append((date, value))
+        except (KeyError, ValueError, TypeError):
+            continue
+    if not result:
+        raise ValueError("NY Fed recession probability CSV has no observations")
+    return result
+
+
+def fetch_cboe_put_call(http_get=_http_get):
+    url = "https://cdn.cboe.com/resources/options/volume_and_call_put_ratios/totalpc.csv"
+    rows = csv.reader(io.StringIO(http_get(url, timeout=60)))
+    header = None
+    result = []
+    for row in rows:
+        normalized = [cell.strip() for cell in row]
+        if "DATE" in normalized and "P/C Ratio" in normalized:
+            header = {name: normalized.index(name) for name in ("DATE", "P/C Ratio")}
+            continue
+        if header:
+            try:
+                date = datetime.strptime(normalized[header["DATE"]], "%m/%d/%Y").strftime("%Y-%m-%d")
+                value = float(normalized[header["P/C Ratio"]])
+                result.append((date, value))
+            except (IndexError, ValueError):
+                continue
+    if not result:
+        raise ValueError("Cboe total put/call CSV has no observations")
+    return result
+
+
+def fetch_cot(params, http_get=_http_get):
+    query = urllib.parse.urlencode({
+        "$select": "report_date_as_yyyy_mm_dd,open_interest_all,lev_money_positions_long,lev_money_positions_short",
+        "$where": f"contract_market_name='{params['market']}'",
+        "$order": "report_date_as_yyyy_mm_dd ASC",
+        "$limit": 50000,
+    })
+    url = "https://publicreporting.cftc.gov/resource/gpe5-46if.json?" + query
+    rows = json.loads(http_get(url, timeout=60))
+    result = []
+    for row in rows:
+        try:
+            date = row["report_date_as_yyyy_mm_dd"][:10]
+            open_interest = float(row["open_interest_all"])
+            long = float(row["lev_money_positions_long"])
+            short = float(row["lev_money_positions_short"])
+            if open_interest:
+                result.append((date, round((long - short) * 100 / open_interest, 4)))
+        except (KeyError, TypeError, ValueError):
+            continue
+    if not result:
+        raise ValueError("CFTC dataset has no matching S&P 500 observations")
+    return result
+
+
+def parse_nyfed_hhdc_xlsx(content, sheet_name, column):
+    from openpyxl import load_workbook
+
+    sheet = load_workbook(io.BytesIO(content), read_only=True, data_only=True)[sheet_name]
+    rows = sheet.iter_rows(values_only=True)
+    column_index = None
+    for row in rows:
+        if row and column in [str(v).strip() if v is not None else "" for v in row]:
+            column_index = [str(v).strip() if v is not None else "" for v in row].index(column)
+            break
+    if column_index is None:
+        raise ValueError(f"NY Fed workbook missing column {column} in {sheet_name}")
+
+    result = []
+    for row in rows:
+        try:
+            label = str(row[0]).strip()
+            match = re.fullmatch(r"(\d{2}):Q([1-4])", label)
+            if not match:
+                continue
+            year = 2000 + int(match.group(1))
+            month = int(match.group(2)) * 3
+            value = float(row[column_index])
+            day = calendar.monthrange(year, month)[1]
+            result.append((f"{year:04d}-{month:02d}-{day:02d}", value))
+        except (IndexError, TypeError, ValueError):
+            continue
+    if not result:
+        raise ValueError(f"NY Fed workbook has no observations in {sheet_name}")
+    return result
+
+
+def _quarter_offset(year, quarter, offset):
+    index = year * 4 + quarter - 1 - offset
+    return index // 4, index % 4 + 1
+
+
+def fetch_nyfed_hhdc(params, http_get_bytes=_http_bytes, today=None, content_cache=None):
+    today = today or datetime.now(timezone.utc).date()
+    content_cache = content_cache if content_cache is not None else {}
+    quarter = (today.month - 1) // 3 + 1
+    last_error = None
+    for offset in range(1, 9):
+        year, q = _quarter_offset(today.year, quarter, offset)
+        url = ("https://www.newyorkfed.org/medialibrary/interactives/householdcredit/"
+               f"data/xls/hhd_c_report_{year}q{q}.xlsx")
+        try:
+            if url not in content_cache:
+                content_cache[url] = http_get_bytes(url)
+            return parse_nyfed_hhdc_xlsx(content_cache[url], params["sheet"], params["column"])
+        except Exception as exc:
+            last_error = exc
+    raise ValueError(f"NY Fed household credit workbook unavailable ({type(last_error).__name__})")
 
 
 def parse_fred_csv(text):
@@ -272,6 +495,21 @@ def ratio_series(num, den):
     return [(d, round(v / den_map[d], 5)) for d, v in num if den_map.get(d)]
 
 
+def cape_erp(cape, real_yield):
+    """CAPE earnings-yield proxy less the last real yield observation in that month."""
+    result = []
+    yield_index = 0
+    for date, cape_value in cape:
+        year, month = map(int, date[:7].split("-"))
+        next_month = datetime(year + (month == 12), month % 12 + 1, 1).strftime("%Y-%m-%d")
+        while yield_index < len(real_yield) and real_yield[yield_index][0] < next_month:
+            yield_index += 1
+        candidate_index = yield_index - 1
+        if candidate_index >= 0 and real_yield[candidate_index][0][:7] == date[:7]:
+            result.append((date, round(100 / cape_value - real_yield[candidate_index][1], 4)))
+    return result
+
+
 def derived_spread(left, right, factor):
     """週次のleftに対し、同日以前の直近のright値を使って left*factor - right を返す。"""
     out = []
@@ -336,10 +574,14 @@ def build_indicator(spec, series=None, error=None, allow_restricted=False):
     return item
 
 
-def generate(fred=fetch_fred, eia=fetch_eia, yf_close=_yf_close, now=None, allow_restricted=False):
+def generate(fred=fetch_fred, eia=fetch_eia, yf_close=_yf_close, now=None, allow_restricted=False,
+             shiller=fetch_shiller, finra=fetch_finra_margin, acm=fetch_acm, cot=fetch_cot,
+             nyfed_hhdc=fetch_nyfed_hhdc, recession=fetch_nyfed_recession,
+             cboe=fetch_cboe_put_call):
     cache = {}
     results = {}
     errors = {}
+    hhdc_content_cache = {}
 
     def fred_cached(sid):
         if sid not in cache:
@@ -359,6 +601,20 @@ def generate(fred=fetch_fred, eia=fetch_eia, yf_close=_yf_close, now=None, allow
                 results[spec["id"]] = moving_average_deviation(yf_close(p["ticker"]), p["window"])
             elif kind == "yf_ratio":
                 results[spec["id"]] = ratio_series(yf_close(p["numerator"]), yf_close(p["denominator"]))
+            elif kind == "shiller":
+                results[spec["id"]] = shiller()
+            elif kind == "finra":
+                results[spec["id"]] = finra()
+            elif kind == "acm":
+                results[spec["id"]] = acm()
+            elif kind == "nyfed_recession":
+                results[spec["id"]] = recession()
+            elif kind == "cboe_put_call":
+                results[spec["id"]] = cboe()
+            elif kind == "cftc":
+                results[spec["id"]] = cot(p)
+            elif kind == "nyfed_hhdc":
+                results[spec["id"]] = nyfed_hhdc(p, content_cache=hhdc_content_cache)
         except Exception as exc:
             # 例外文にURLやキーが含まれ得るため、型名のみ記録する
             errors[spec["id"]] = f"取得に失敗しました ({type(exc).__name__})。"
@@ -368,17 +624,33 @@ def generate(fred=fetch_fred, eia=fetch_eia, yf_close=_yf_close, now=None, allow
     for spec in SPECS:
         if spec["kind"] == "derived" and (allow_restricted or not spec.get("restricted")):
             p = spec["params"]
-            if p["left"] in results and p["right"] in results:
+            if p.get("method") == "cape_erp":
+                if p["left"] in results and p["right"] in results:
+                    results[spec["id"]] = cape_erp(results[p["left"]], results[p["right"]])
+                else:
+                    errors[spec["id"]] = "CAPE・実質金利の元データを取得できず算出できません。"
+            elif p["left"] in results and p["right"] in results:
                 results[spec["id"]] = derived_spread(results[p["left"]], results[p["right"]], p["factor"])
             else:
                 errors[spec["id"]] = "元データの取得に失敗したため算出できません。"
 
-    generated = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    generated_dt = now or datetime.now(timezone.utc)
+    generated = generated_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    indicators = [build_indicator(s, results.get(s["id"]), errors.get(s["id"]), allow_restricted)
+                  for s in SPECS]
+    for item in indicators:
+        if item.get("latest") and item["id"] in ("cape", "erp", "recession_prob", "put_call"):
+            try:
+                observation = datetime.strptime(item["latest"]["date"], "%Y-%m-%d").date()
+                if (generated_dt.date() - observation).days > 180:
+                    item["status"] = "stale"
+                    item["reason"] = "取得元ファイルの最終観測が180日超前です。数値は古く、現在値として扱わないでください。"
+            except ValueError:
+                continue
     return {
         "generated_at": generated,
         "groups": GROUPS,
-        "indicators": [build_indicator(s, results.get(s["id"]), errors.get(s["id"]), allow_restricted)
-                       for s in SPECS],
+        "indicators": indicators,
     }
 
 

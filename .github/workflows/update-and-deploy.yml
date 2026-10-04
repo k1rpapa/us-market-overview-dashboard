@@ -25,7 +25,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install dependencies
-        run: pip install yfinance pandas
+        run: pip install -r requirements.txt
       - name: Run tests
         run: python -m unittest discover -s tests
       - name: Fetch indicators
