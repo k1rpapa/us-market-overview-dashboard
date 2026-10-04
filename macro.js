@@ -68,19 +68,24 @@ function buildRangeBar(stats, latestValue) {
         `<div class="range-labels"><span>${escapeHtml(formatNumber(stats.min))}</span><span>${escapeHtml(formatNumber(stats.max))}</span></div>`;
 }
 
+const MIN_HISTORY_POINTS = 30;
+
 function renderIndicatorCard(ind) {
     const status = ind.status in MACRO_STATUS_LABELS ? ind.status : "unavailable";
     let body;
     if ((status === "ok" || status === "stale") && ind.latest) {
         const s = ind.stats || {};
+        const short = Number(s.count) < MIN_HISTORY_POINTS;
         body = `
             <div class="macro-value">${escapeHtml(formatValue(ind.latest.value, ind.unit))}</div>
             <div class="macro-asof">最新観測日: ${escapeHtml(ind.latest.date)} ／ ${escapeHtml(ind.frequency)}</div>
             ${status === "stale" ? `<div class="macro-unavailable">${escapeHtml(ind.reason)}</div>` : ""}
             <div class="macro-spark">${buildSparkline(ind.history)}</div>
-            ${buildRangeBar(s, ind.latest.value)}
-            <div class="macro-stats">歴史的位置: <strong>${escapeHtml(percentileLabel(s.percentile))}</strong>
-                （${escapeHtml(s.start)}〜 / 中央値 ${escapeHtml(formatNumber(s.median))}）</div>`;
+            ${short ? "" : buildRangeBar(s, ind.latest.value)}
+            ${short
+                ? `<div class="macro-stats">蓄積${escapeHtml(String(s.count))}日（${escapeHtml(s.start)}〜）: 観測日数が少ないため歴史的位置は表示しません。</div>`
+                : `<div class="macro-stats">歴史的位置: <strong>${escapeHtml(percentileLabel(s.percentile))}</strong>
+                （${escapeHtml(s.start)}〜 / 中央値 ${escapeHtml(formatNumber(s.median))}）</div>`}`;
     } else {
         body = `
             <div class="macro-unavailable">${escapeHtml(ind.reason || "データがありません。")}</div>

@@ -1,4 +1,4 @@
-﻿import json
+import json
 import os
 import tempfile
 import unittest
@@ -219,7 +219,7 @@ class GenerateTests(unittest.TestCase):
         item = self.by_id(data)["recession_prob"]
         self.assertEqual(item["status"], "ok")
         self.assertEqual(item["latest"]["date"], "2026-09-30")
-        self.assertIn("??", item["name"])
+        self.assertIn("代理", item["name"])
         self.assertIn("0.6330", item["formula"])
 
     def test_shiller_page_link_is_extracted(self):
@@ -249,6 +249,22 @@ class GenerateTests(unittest.TestCase):
         public = self.by_id(fm.generate(allow_restricted=False, **kwargs))["put_call"]
         self.assertEqual(public["status"], "restricted")
         self.assertNotIn("latest", public)
+
+    def test_add_putcall_appends_overwrites_and_rejects_bad_input(self):
+        import add_putcall as ap
+        today = datetime(2026, 10, 4).date()
+        self.assertEqual(ap.parse_entry("0.62", None, today), ("2026-10-04", 0.62))
+        for bad in (("abc", None), ("-1", None), ("nan", None), ("99", None), ("0.6", "2026-13-01"), ("0.6", "2026-10-05")):
+            with self.assertRaises(ValueError):
+                ap.parse_entry(*bad, today=today)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "local_data", "barchart_cpcs.csv")
+            ap.upsert(path, "2026-10-03", 0.7)
+            ap.upsert(path, "2026-10-02", 0.5)
+            self.assertEqual(ap.upsert(path, "2026-10-03", 0.71), 2)
+            with open(path, encoding="utf-8") as handle:
+                self.assertEqual(handle.read().splitlines(), ["Date,Close", "2026-10-02,0.5", "2026-10-03,0.71"])
+            self.assertEqual(fm.read_barchart_cpcs(path), [("2026-10-02", 0.5), ("2026-10-03", 0.71)])
 
     def test_eia_key_never_written(self):
         os.environ["EIA_API_KEY"] = "TOPSECRETKEY"

@@ -1,4 +1,4 @@
-﻿# 米国市場 俯瞰ダッシュボード
+# 米国市場 俯瞰ダッシュボード
 
 米国株式市場の大局を、指標ごとに長期推移と歴史的レンジで見る個人用ダッシュボード。静的サイト(GitHub Pages)で、データは `fetch_macro.py` が生成する `macro.json`。
 
@@ -38,7 +38,7 @@ python -m http.server 8000 --bind 0.0.0.0 # http://localhost:8000
 
 ## データの扱い
 - FRED経由の系列は出典(FRED/元機関)を各カードに表示。ICE BofA社債OASなど第三者の再配布制限があるデータと、Yahoo Finance由来の指数・ETF系列(S&P500、SPY/RSP、VIX)は、公開JSONに値・履歴を含めず「再配布制限」と表示します。
-- 公開取得を接続した系列: Shiller CAPE (shillerdata.com ???ie_data.xls?????????????????Yale????), CAPE earnings-yield minus real-yield proxy (ERP), FINRA margin debit balances, CFTC S&P 500 leveraged-fund net positions/open interest, NY Fed ACM 10-year term premium, NY Fed 12-month recession probability, NY Fed/Equifax credit-card and auto-loan flows into 30+ and 90+ day delinquency. NY Fed/Census core capital goods orders and FRB SLOOS remain connected through FRED.
+- 公開取得を接続した系列: Shiller CAPE (shillerdata.com の最新ie_data.xls。取得できない場合のみ更新停止中のYale版へ代替), CAPE earnings-yield minus real-yield proxy (ERP), FINRA margin debit balances, CFTC S&P 500 leveraged-fund net positions/open interest, NY Fed ACM 10-year term premium, NY Fed 12-month recession probability, NY Fed/Equifax credit-card and auto-loan flows into 30+ and 90+ day delinquency. NY Fed/Census core capital goods orders and FRB SLOOS remain connected through FRED.
 - CAPE/ERP: Shiller's maintained site (shillerdata.com) is used and currently extends to 2026-09 (the Yale copy ends 2023-09 and is only a fallback). The latest months use estimated CPI/earnings per the source notes. ERP is a CAPE-based proxy.
 - Recession probability: the NY Fed CSV ends at 2017-06, so the card falls back to a clearly labeled proxy computed here from FRED T10Y3M with the published probit (P = 100 ? ?(?0.5333 ? 0.6330 ? monthly mean 10y?3m spread), 12 months ahead). Over the overlap with the official CSV the mean absolute difference is 0.07 points. It is not an official NY Fed release.
 - Cboe's downloadable total put/call CSV ends in 2019 and is stale. Cboe's newer daily statistics are only on its website/undocumented endpoints, and Cboe's terms prohibit automated access, so they are not fetched; the Put/Call card stays local-only and stale with a link to the source.
@@ -55,3 +55,11 @@ Cboeの公開CSVが2019年で止まっているため、Barchart会員が手動�
 - 期待する形式: ヘッダー行に `Time`(または`Date`)と `Last`(または`Close`)列を含むCSV。日付は `YYYY-MM-DD` または `MM/DD/YYYY`。末尾の `Downloaded from Barchart.com...` 等の行は無視されます。
 - `$CPCS` は株式(エクイティ)のみの比率で、Cboe全体比率とは水準が異なります。カードにもその旨を表示します。更新するには定期的にCSVを再ダウンロードしてください。
 - Barchartのウェブサイトのスクレイピングや自動ログインは行いません。自動取得を行う場合は、契約プランにBarchart OnDemand等のAPI権限とデータ保存範囲が含まれるか確認が必要です。
+
+#### 毎日の入力手順 (履歴CSVなしで蓄積する方式)
+Barchartの履歴CSVはプランによっては使えないため、当日の終値を手入力して `local_data/barchart_cpcs.csv` に蓄積します。
+1. Barchartで `$CPCS` の終値を確認します。
+2. `python add_putcall.py 0.62` を実行します (日付省略時は今日。過去日は `python add_putcall.py 0.62 2026-10-02`)。ヘッダー(`Date,Close`)は自動作成、同日は上書き、数値でない値・0以下・10超・未来日は拒否されます。
+3. `python fetch_macro.py --local` を実行して `macro.local.json` を更新します。
+- 蓄積が30日未満の間は、カードに「蓄積N日」と表示し、歴史的位置(パーセンタイル)は表示しません。
+- ファイルは `local_data/` (gitignore済み) にのみ保存され、公開版には含まれません。

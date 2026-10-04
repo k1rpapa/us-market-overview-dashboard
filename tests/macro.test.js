@@ -1,4 +1,4 @@
-﻿const test = require("node:test");
+const test = require("node:test");
 const assert = require("node:assert");
 const m = require("../macro.js");
 
@@ -50,6 +50,13 @@ test("stale card preserves its last observed value and warns users", () => {
     assert.match(html, /2017-06-30/);
     assert.match(html, /最終観測が古いです/);
     assert.match(html, /最終観測が古い/);
+});
+
+test("short accumulated history shows day count instead of historical position", () => {
+    const short = m.renderIndicatorCard({ ...okInd, stats: { ...okInd.stats, count: 3, start: "2026-10-01" } });
+    assert.match(short, /蓄積3日/);
+    assert.doesNotMatch(short, /歴史的位置:/);
+    assert.match(m.renderIndicatorCard({ ...okInd, stats: { ...okInd.stats, count: 400 } }), /歴史的位置:/);
 });
 
 test("renderMacroHtml empty state, grouping and no composite score", () => {
