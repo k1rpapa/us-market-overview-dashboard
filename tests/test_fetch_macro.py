@@ -1,5 +1,6 @@
 import json
 import os
+import tempfile
 import unittest
 from datetime import datetime, timezone
 
@@ -74,6 +75,32 @@ class GenerateTests(unittest.TestCase):
             self.assertNotIn("history", ids[rid])
         self.assertEqual(ids["diesel_crude_spread"]["latest"]["value"], 56.0)
 
+    def test_local_mode_includes_restricted_series(self):
+        def fred(_):
+            return [("2024-01-01", 1.0), ("2024-01-02", 2.0)]
+
+        def yf_close(_):
+            return [(f"2024-{i:03d}", float(i + 100)) for i in range(220)]
+
+        ids = self.by_id(fm.generate(fred=fred, eia=lambda _: [], yf_close=yf_close, allow_restricted=True))
+        for rid in ("hy_oas", "ig_oas", "sp500_200d", "cap_vs_equal", "vix_curve"):
+            self.assertEqual(ids[rid]["status"], "ok")
+            self.assertIn("latest", ids[rid])
+            self.assertIn("history", ids[rid])
+        self.assertIn("ローカル専用", ids["hy_oas"]["caution"])
+
+    def test_dotenv_does_not_override_existing_environment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, ".env")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("DASH_TEST_ENV=from-file\n")
+            os.environ["DASH_TEST_ENV"] = "from-process"
+            try:
+                fm.load_dotenv(path)
+                self.assertEqual(os.environ["DASH_TEST_ENV"], "from-process")
+            finally:
+                del os.environ["DASH_TEST_ENV"]
+
     def test_eia_key_never_written(self):
         os.environ["EIA_API_KEY"] = "TOPSECRETKEY"
         try:
@@ -93,6 +120,21 @@ class GenerateTests(unittest.TestCase):
             self.assertIn(ind["status"], ("ok", "pending", "link_only", "unavailable", "restricted"))
             self.assertEqual(ind["status"] == "ok", "latest" in ind)
             self.assertTrue(ind["source"] and ind["definition"] and ind["frequency"])
+        by_id = {ind["id"]: ind for ind in data["indicators"]}
+        for indicator_id in ("hy_oas", "ig_oas", "sp500_200d", "cap_vs_equal", "vix_curve"):
+            self.assertEqual(by_id[indicator_id]["status"], "restricted")
+            self.assertNotIn("latest", by_id[indicator_id])
+            self.assertNotIn("history", by_id[indicator_id])
+
+    def test_local_file_is_ignored_and_pages_staging_is_allowlisted(self):
+        root = os.path.dirname(os.path.dirname(__file__))
+        with open(os.path.join(root, ".gitignore"), encoding="utf-8") as f:
+            self.assertIn("macro.local.json", f.read())
+        with open(os.path.join(root, ".github", "workflows", "update-and-deploy.yml"), encoding="utf-8") as f:
+            workflow = f.read()
+        staging = workflow.split("Stage public files only", 1)[1].split("configure-pages", 1)[0]
+        self.assertIn("macro.json", staging)
+        self.assertNotIn("macro.local.json", staging)
 
 
 if __name__ == "__main__":

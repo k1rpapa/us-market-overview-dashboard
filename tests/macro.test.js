@@ -50,3 +50,23 @@ test("renderMacroHtml empty state, grouping and no composite score", () => {
     assert.match(html, /総合スコアは算出していません/);
 });
 
+test("prefers local JSON and falls back to public JSON", async () => {
+    const calls = [];
+    const local = await m.loadMacroData(async url => {
+        calls.push(url);
+        return { ok: true, json: async () => ({ indicators: [] }) };
+    });
+    assert.strictEqual(local.local_only, true);
+    assert.match(calls[0], /^macro\.local\.json/);
+    assert.strictEqual(calls.length, 1);
+
+    calls.length = 0;
+    const publicData = await m.loadMacroData(async url => {
+        calls.push(url);
+        return url.startsWith("macro.local.json")
+            ? { ok: false, status: 404 }
+            : { ok: true, json: async () => ({ indicators: [] }) };
+    });
+    assert.strictEqual(publicData.local_only, undefined);
+    assert.match(calls[1], /^macro\.json/);
+});

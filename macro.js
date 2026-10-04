@@ -129,10 +129,11 @@ async function loadMacro(force = false) {
     if (!el || (macroLoaded && !force)) return;
     el.innerHTML = `<p class="macro-message">指標データを読み込み中...</p>`;
     try {
-        const res = await fetch("macro.json?t=" + Date.now(), { cache: "no-store" });
-        if (!res.ok) throw new Error("HTTP " + res.status);
-        const data = await res.json();
+        const data = await loadMacroData();
         el.innerHTML = renderMacroHtml(data);
+        if (data.local_only) {
+            el.insertAdjacentHTML("afterbegin", `<p class="macro-local-notice">ローカル版: 再配布制限のあるデータを含みます。このファイルや画面を公開・共有しないでください。</p>`);
+        }
         macroLoaded = true;
     } catch (error) {
         console.error("Failed to load macro data:", error);
@@ -143,11 +144,29 @@ async function loadMacro(force = false) {
     }
 }
 
+async function loadMacroData(fetchImpl = fetch) {
+    let localResponse;
+    try {
+        localResponse = await fetchImpl("macro.local.json?t=" + Date.now(), { cache: "no-store" });
+    } catch (_) {
+        localResponse = null;
+    }
+    if (localResponse && localResponse.ok) {
+        const localData = await localResponse.json();
+        localData.local_only = true;
+        return localData;
+    }
+
+    const publicResponse = await fetchImpl("macro.json?t=" + Date.now(), { cache: "no-store" });
+    if (!publicResponse.ok) throw new Error("HTTP " + publicResponse.status);
+    return publicResponse.json();
+}
+
 if (typeof document !== "undefined") {
     document.addEventListener("DOMContentLoaded", () => loadMacro());
 }
 
 if (typeof module !== "undefined" && module.exports) {
     module.exports = { escapeHtml, safeUrl, formatValue, formatNumber, percentileLabel,
-        buildSparkline, buildRangeBar, renderIndicatorCard, renderMacroHtml };
+        buildSparkline, buildRangeBar, renderIndicatorCard, renderMacroHtml, loadMacroData };
 }

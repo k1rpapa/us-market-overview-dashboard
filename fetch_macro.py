@@ -4,6 +4,7 @@
 - EIA_API_KEY は環境変数からのみ読み込み、出力ファイルやログには含めない。
 """
 import csv
+import argparse
 import io
 import json
 import os
@@ -314,15 +315,18 @@ def _public(spec):
 
 
 RESTRICTED_REASON = "第三者(指数提供元/データ配信元)の再配布制限があるため、公開リポジトリでは値・履歴を掲載しません。出典リンク先で確認してください。"
+LOCAL_RESTRICTED_REASON = "ローカル専用データです。公開版への再配布はできません。"
 
 
-def build_indicator(spec, series=None, error=None):
+def build_indicator(spec, series=None, error=None, allow_restricted=False):
     item = _public(spec)
-    if spec.get("restricted"):
+    if spec.get("restricted") and not allow_restricted:
         item.update({"status": "restricted", "reason": RESTRICTED_REASON})
     elif series:
         item.update({"status": "ok", "reason": ""})
         item.update(summarize(series))
+        if spec.get("restricted"):
+            item["caution"] += " " + LOCAL_RESTRICTED_REASON
     elif spec["kind"] == "link":
         item.update({"status": "link_only", "reason": spec["reason"]})
     elif spec["kind"] == "pending":
@@ -332,7 +336,7 @@ def build_indicator(spec, series=None, error=None):
     return item
 
 
-def generate(fred=fetch_fred, eia=fetch_eia, yf_close=_yf_close, now=None):
+def generate(fred=fetch_fred, eia=fetch_eia, yf_close=_yf_close, now=None, allow_restricted=False):
     cache = {}
     results = {}
     errors = {}
@@ -344,7 +348,7 @@ def generate(fred=fetch_fred, eia=fetch_eia, yf_close=_yf_close, now=None):
 
     for spec in SPECS:
         kind, p = spec["kind"], spec["params"]
-        if spec.get("restricted"):
+        if spec.get("restricted") and not allow_restricted:
             continue
         try:
             if kind == "fred":
@@ -362,7 +366,7 @@ def generate(fred=fetch_fred, eia=fetch_eia, yf_close=_yf_close, now=None):
                 errors[spec["id"]] = spec["reason"]
 
     for spec in SPECS:
-        if spec["kind"] == "derived" and not spec.get("restricted"):
+        if spec["kind"] == "derived" and (allow_restricted or not spec.get("restricted")):
             p = spec["params"]
             if p["left"] in results and p["right"] in results:
                 results[spec["id"]] = derived_spread(results[p["left"]], results[p["right"]], p["factor"])
@@ -373,16 +377,44 @@ def generate(fred=fetch_fred, eia=fetch_eia, yf_close=_yf_close, now=None):
     return {
         "generated_at": generated,
         "groups": GROUPS,
-        "indicators": [build_indicator(s, results.get(s["id"]), errors.get(s["id"])) for s in SPECS],
+        "indicators": [build_indicator(s, results.get(s["id"]), errors.get(s["id"]), allow_restricted)
+                       for s in SPECS],
     }
 
 
-if __name__ == "__main__":
-    out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "macro.json")
-    data = generate()
+def load_dotenv(path):
+    """Load simple KEY=VALUE entries without overriding already-set environment variables."""
+    if not os.path.exists(path):
+        return
+    with open(path, encoding="utf-8") as env_file:
+        for raw_line in env_file:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip("\"'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Fetch US market overview indicators.")
+    parser.add_argument("--local", action="store_true",
+                        help="include restricted series and write gitignored macro.local.json")
+    args = parser.parse_args(argv)
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    load_dotenv(os.path.join(base_dir, ".env"))
+    output_name = "macro.local.json" if args.local else "macro.json"
+    out_path = os.path.join(base_dir, output_name)
+    data = generate(allow_restricted=args.local)
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=1)
     counts = {}
     for i in data["indicators"]:
         counts[i["status"]] = counts.get(i["status"], 0) + 1
-    print("macro.json written:", counts)
+    print(f"{output_name} written:", counts)
+
+
+if __name__ == "__main__":
+    main()
