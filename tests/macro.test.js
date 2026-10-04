@@ -1,0 +1,52 @@
+﻿const test = require("node:test");
+const assert = require("node:assert");
+const m = require("../macro.js");
+
+const okInd = {
+    id: "hy_oas", group: "credit", name: "HY <OAS>", status: "ok", unit: "%", frequency: "日次",
+    definition: "d", reading: "r", caution: "c", source: "FRED", source_url: "https://fred.stlouisfed.org/",
+    latest: { date: "2026-10-01", value: 3.24 },
+    stats: { min: 2, max: 20, median: 4, percentile: 20, start: "1996-12-31" },
+    history: [["a", 1], ["b", 3], ["c", 2]]
+};
+const pending = { id: "cape", group: "valuation", name: "CAPE", status: "pending", reason: "未接続です", frequency: "月次",
+    definition: "d", reading: "r", caution: "c", source: "Shiller", source_url: "javascript:alert(1)" };
+
+test("formatValue handles units and invalid numbers", () => {
+    assert.strictEqual(m.formatValue(3.24, "%"), "3.24%");
+    assert.strictEqual(m.formatValue(96.16, "$/bbl"), "96.16 $/bbl");
+    assert.strictEqual(m.formatValue(null, "%"), "—");
+});
+
+test("percentileLabel", () => {
+    assert.strictEqual(m.percentileLabel(20), "下位 20%");
+    assert.strictEqual(m.percentileLabel(95), "上位 5%");
+});
+
+test("buildSparkline needs two points", () => {
+    assert.strictEqual(m.buildSparkline([["a", 1]]), "");
+    assert.match(m.buildSparkline(okInd.history), /<polyline/);
+});
+
+test("ok card shows value, date and escapes HTML", () => {
+    const html = m.renderIndicatorCard(okInd);
+    assert.match(html, /3\.24%/);
+    assert.match(html, /2026-10-01/);
+    assert.match(html, /HY &lt;OAS&gt;/);
+});
+
+test("pending card shows reason, no value, and unsafe URL neutralised", () => {
+    const html = m.renderIndicatorCard(pending);
+    assert.match(html, /未接続です/);
+    assert.doesNotMatch(html, /macro-value/);
+    assert.doesNotMatch(html, /javascript:/);
+});
+
+test("renderMacroHtml empty state, grouping and no composite score", () => {
+    assert.match(m.renderMacroHtml({ indicators: [] }), /表示できる指標がありません/);
+    const html = m.renderMacroHtml({ generated_at: "T", groups: [{ id: "credit", name: "信用" }, { id: "valuation", name: "割高感" }], indicators: [okInd, pending] });
+    assert.match(html, /取得済み 1 \/ 2/);
+    assert.match(html, /信用/);
+    assert.match(html, /総合スコアは算出していません/);
+});
+

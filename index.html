@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>米国市場 俯瞰ダッシュボード</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <header class="app-header">
+            <h1>🌐 米国市場 俯瞰ダッシュボード</h1>
+            <p class="subtitle">割高感・市場の広がり・信用・景気・金利・エネルギーを指標単位で長期推移と歴史的レンジから確認します。</p>
+        </header>
+
+        <main class="macro-container card" id="macroView">
+            <div class="manual-header">
+                <h2>指標一覧</h2>
+                <p>判断は総合スコアではなく、各指標の定義・注意点とあわせて行ってください。未接続・取得失敗の指標は値を表示しません。</p>
+            </div>
+            <div id="macroContent" aria-live="polite"></div>
+        </main>
+
+        <footer class="app-footer">
+            <p>データ出典: FRED, Yahoo Finance, EIA ほか。各カードの出典を参照。投資助言ではありません。</p>
+            <p>This product uses the FRED® API but is not endorsed or certified by the Federal Reserve Bank of St. Louis.</p>
+        </footer>
+    </div>
+    <script src="macro.js"></script>
+</body>
+</html>

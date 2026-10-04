@@ -1,0 +1,66 @@
+﻿# 日次で指標を取得し、macro.json を更新して GitHub Pages に公開する。
+name: Update data and deploy Pages
+
+on:
+  schedule:
+    # 日本時間 06:30 (UTC 21:30)
+    - cron: '30 21 * * *'
+  push:
+    branches: [main]
+    paths: ['index.html', 'macro.js', 'styles.css']
+  workflow_dispatch:
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install yfinance pandas
+      - name: Run tests
+        run: python -m unittest discover -s tests
+      - name: Fetch indicators
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          EIA_API_KEY: ${{ secrets.EIA_API_KEY }}
+        run: python fetch_macro.py
+      - name: Commit updated data
+        run: |
+          git config user.email "action@github.com"
+          git config user.name "GitHub Action Bot"
+          git add macro.json
+          git diff --staged --quiet || (git commit -m "Auto-update macro.json" && git push)
+
+  deploy:
+    needs: update
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Stage public files only
+        run: |
+          mkdir site
+          cp index.html macro.js styles.css macro.json site/
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4
