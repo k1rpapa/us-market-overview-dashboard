@@ -67,6 +67,6 @@ Barchartの履歴CSVはプランによっては使えないため、当日の終
 ## AIアナリスト分析 (Gemini)
 
 - `python insights.py` が各カテゴリの現在値・歴史的位置・最終観測日・stale/未接続状態を Gemini に渡し、短い日本語コメントを `insights.json` に出力します (カテゴリごと1コール + 全体俯瞰1コール、temperature 0.2)。投資助言・総合スコアは出力させません。
-- キー: GitHub Secrets に `GEMINI_API_KEY` を登録 (ローカルは `.env`)。モデルは `GEMINI_MODEL` (既定 `gemini-2.5-flash`、失敗時 `gemini-2.5-flash-lite`)。キー未設定/API失敗時は「未生成」表示になり、他の表示には影響しません。入力が前回と同一なら再生成しません。
+- キー: GitHub Secrets に `GEMINI_API_KEY` を登録 (ローカルは `.env`)。モデルは `GEMINI_MODEL` (既定 `gemini-3.8-flash`、失敗時 `gemini-2.5-flash`)。キー未設定/API失敗時は「未生成」表示になり、他の表示には影響しません。入力が前回と同一なら再生成しません。
 - 公開版 (`insights.json`) は再配布制限指標を入力にも出力にも含めません。ローカル版 (`python insights.py --local`) は `macro.local.json` から `insights.local.json` (gitignore) を生成します。
 - 注意: Gemini API の無料枠では入力が Google の製品改善に使われ得ます。制限データを含むローカル分析には課金済みキーを推奨します。
