@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-06T05:08:37Z",
+ "generated_at": "2026-10-06T05:52:09Z",
  "groups": [
   {
    "id": "valuation",
@@ -2701,8 +2701,8 @@
    "name": "騰落(A/D)ライン",
    "definition": "値上がり銘柄数−値下がり銘柄数の累積。",
    "reading": "指数が上昇してもA/Dが伴わなければ上昇の裾野が狭い。",
-   "caution": "取引所ごとに定義が異なる。",
-   "source": "NYSE / Nasdaq 日次 advancing/declining issues (手動CSV・ローカル専用)",
+   "caution": "5つの市場/構成銘柄ユニバースを個別に扱います。",
+   "source": "手動入力のadvancing/declining issues (ローカル専用)",
    "source_url": "https://www.nyse.com/market-data",
    "frequency": "日次 (手動CSV)",
    "unit": "",
