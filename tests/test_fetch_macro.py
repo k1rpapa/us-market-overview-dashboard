@@ -266,7 +266,11 @@ class GenerateTests(unittest.TestCase):
         kwargs = dict(fred=lambda s: [], eia=lambda _: [], yf_close=lambda _: [],
                       shiller=lambda: [], finra=lambda: [], acm=lambda: [], cot=lambda _: [],
                       nyfed_hhdc=lambda *_a, **_k: [], recession=lambda: [],
-                      cboe=lambda: [], barchart=lambda: None, ad_reader=lambda: (market, series))
+                      cboe=lambda: [], barchart=lambda: None, ad_reader=lambda: (market, series),
+                      ad_records_reader=lambda: (market, [
+                          ("2026-10-01", 1500, 1000, 100, True),
+                          ("2026-10-02", 800, 1700, 50, True),
+                          ("2026-10-05", 1200, 1300, 10, True)]))
         local = self.by_id(fm.generate(allow_restricted=True, now=datetime(2026, 10, 6, tzinfo=timezone.utc), **kwargs))["ad_line"]
         self.assertEqual((local["status"], local["market"], local["latest"]["date"]), ("ok", "NYSE", "2026-10-05"))
         self.assertEqual(local["stats"]["count"], 3)
@@ -276,7 +280,8 @@ class GenerateTests(unittest.TestCase):
         self.assertEqual(public["status"], "restricted")
         self.assertNotIn("latest", public)
         self.assertNotIn("market", public)
-        missing = self.by_id(fm.generate(allow_restricted=True, **dict(kwargs, ad_reader=lambda: None)))["ad_line"]
+        missing = self.by_id(fm.generate(allow_restricted=True, **dict(
+            kwargs, ad_reader=lambda: None, ad_records_reader=lambda: None)))["ad_line"]
         self.assertEqual(missing["status"], "unavailable")
 
     def test_ad_breadth_and_index_divergence_are_local_only(self):
@@ -286,7 +291,7 @@ class GenerateTests(unittest.TestCase):
         for day in range(1, 12):
             adv, dec = (110, 100) if day < 11 else (50, 200)
             value += adv - dec
-            records.append((f"2026-09-{day:02d}", adv, dec, 10))
+            records.append((f"2026-09-{day:02d}", adv, dec, 10, True))
             cumulative.append((f"2026-09-{day:02d}", value))
         index = [(f"2026-09-{day:02d}", float(100 + day)) for day in range(1, 11)]
         index.append(("2026-09-11", 120.0))
@@ -298,6 +303,7 @@ class GenerateTests(unittest.TestCase):
                       now=datetime(2026, 9, 11, tzinfo=timezone.utc))
         local = self.by_id(fm.generate(allow_restricted=True, **kwargs))["ad_line"]
         self.assertEqual(local["breadth"]["advance_pct"], 20.0)
+        self.assertAlmostEqual(local["breadth"]["whole_universe_pct"], 19.23)
         self.assertEqual(local["breadth"]["average_window"], 10)
         self.assertEqual(local["daily_net"][-1], ["2026-09-11", -150])
         self.assertIn("高値を更新", local["comparison"]["reading"])
@@ -310,6 +316,44 @@ class GenerateTests(unittest.TestCase):
         self.assertEqual(public["status"], "restricted")
         for field in ("latest", "history", "breadth", "daily_net", "comparison"):
             self.assertNotIn(field, public)
+
+    def test_ad_generates_all_present_universe_cards_with_matched_benchmarks(self):
+        records_by_universe = {}
+        benchmarks = {
+            "ALL_COMMON": "^W5000", "DOW": "^DJI", "SP500": "^GSPC",
+            "NYSE": "^NYA", "NASDAQ": "^IXIC",
+        }
+        index_rows = [("2026-10-02", 100.0), ("2026-10-05", 101.0)]
+        for universe in fm.AD_UNIVERSES:
+            records_by_universe[universe] = [
+                ("2026-10-02", 100, 90, 10, True),
+                ("2026-10-05", 80, 110, 10, False),
+            ]
+        kwargs = dict(fred=lambda s: [], eia=lambda _: [],
+                      yf_close=lambda ticker: index_rows if ticker in benchmarks.values() else [],
+                      shiller=lambda: [], finra=lambda: [], acm=lambda: [], cot=lambda _: [],
+                      nyfed_hhdc=lambda *_a, **_k: [], recession=lambda: [],
+                      cboe=lambda: [], barchart=lambda: None,
+                      ad_records_reader=lambda: records_by_universe,
+                      now=datetime(2026, 10, 6, tzinfo=timezone.utc))
+        local = fm.generate(allow_restricted=True, **kwargs)
+        ad_cards = [item for item in local["indicators"] if item["id"].startswith("ad_line")]
+        self.assertEqual(len(ad_cards), 5)
+        by_id = {item["id"]: item for item in ad_cards}
+        self.assertEqual(set(by_id), {"ad_line_all_common", "ad_line_dow", "ad_line_sp500", "ad_line", "ad_line_nasdaq"})
+        self.assertEqual(by_id["ad_line_dow"]["comparison"]["ticker"], "^DJI")
+        self.assertEqual(by_id["ad_line_sp500"]["comparison"]["ticker"], "^GSPC")
+        self.assertEqual(by_id["ad_line"]["comparison"]["ticker"], "^NYA")
+        self.assertEqual(by_id["ad_line_nasdaq"]["comparison"]["ticker"], "^IXIC")
+        self.assertEqual(by_id["ad_line_all_common"]["comparison"]["ticker"], "^W5000")
+        self.assertEqual(by_id["ad_line_all_common"]["comparison"]["comparison_type"], "reference")
+        self.assertIsNone(by_id["ad_line_nasdaq"]["breadth"]["whole_universe_pct"])
+        self.assertEqual(by_id["ad_line_nasdaq"]["latest"]["date"], "2026-10-05")
+        self.assertEqual(len(by_id["ad_line_nasdaq"]["comparison"]["series"]), 2)
+        public = fm.generate(allow_restricted=False, **kwargs)
+        public_ads = [item for item in public["indicators"] if item["id"].startswith("ad_line")]
+        self.assertEqual(len(public_ads), 1)
+        self.assertEqual(public_ads[0]["status"], "restricted")
 
     def test_add_putcall_appends_overwrites_and_rejects_bad_input(self):
         import add_putcall as ap

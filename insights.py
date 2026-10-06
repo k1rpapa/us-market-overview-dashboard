@@ -31,7 +31,12 @@ STATUS_JA = {
     "restricted": "対象外",
 }
 # Public output is rejected if the model names restricted series that were never provided.
-RESTRICTED_TERMS = re.compile(r"OAS|SPY|RSP|VIX|プット\s*/\s*コール|put\s*/\s*call|200日線乖離", re.IGNORECASE)
+RESTRICTED_TERMS = re.compile(
+    r"OAS|SPY|RSP|VIX|プット\s*/\s*コール|put\s*/\s*call|200日線乖離|"
+    r"\bA/D\b|A／D|騰落\s*\(A/D\)|advance[\s-]*decline|breadth|上昇の広がり|"
+    r"Wilshire 5000|NYSE Composite|Nasdaq Composite|Dow Jones Industrial Average",
+    re.IGNORECASE,
+)
 
 PERSONA = """あなたは機関投資家出身のマクロ・ストラテジストです。冷静で慎重、過度に断定しません。
 # ルール

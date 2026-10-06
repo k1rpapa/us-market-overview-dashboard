@@ -84,15 +84,18 @@ function buildAdComparison(comparison) {
         }).join(" ");
     };
     const first = rows[0][0], last = rows[rows.length - 1][0];
+    const indexLabel = comparison.comparison_type === "reference"
+        ? `${comparison.index_name} (参考指数・基準日比%)`
+        : `${comparison.index_name} (指数価格・基準日比%)`;
     return `<div class="ad-compare-chart">
-        <div class="ad-legend"><span class="ad-legend-line">A/D累積差 (基準日比)</span><span class="ad-legend-index">${escapeHtml(comparison.index_name)} (基準日比%)</span></div>
+        <div class="ad-legend"><span class="ad-legend-line">A/D累積差 (基準日比)</span><span class="ad-legend-index">${escapeHtml(indexLabel)}</span></div>
         <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="A/Dラインと${escapeHtml(comparison.index_name)}の同期間推移。縦軸はそれぞれ独立スケール">
             <line x1="${pad}" y1="${height / 2}" x2="${width - pad}" y2="${height / 2}" class="ad-zero"/>
             <polyline points="${project(1)}" class="ad-line-path"/>
             <polyline points="${project(2)}" class="ad-index-path"/>
         </svg>
         <div class="ad-chart-dates"><span>${escapeHtml(first)}</span><span>${escapeHtml(last)}</span></div>
-        <p class="ad-reading">${escapeHtml(comparison.reading)} <small>縦軸は線ごとに独立スケールです。</small></p>
+        <p class="ad-reading">${escapeHtml(comparison.reading)} <small>A/Dは対象銘柄のbreadth、指数は株価です。縦軸は線ごとに独立スケールで、参考比較として見てください。</small></p>
     </div>`;
 }
 
@@ -121,10 +124,12 @@ function buildAdDetails(ind) {
     const b = ind.breadth;
     const latest = b.advance_pct == null ? "—" : `${formatNumber(b.advance_pct)}%`;
     const average = b.average_pct == null ? "—" : `${formatNumber(b.average_pct)}%`;
+    const totalRatio = b.whole_universe_pct == null ? "算出不可 (unch/総数が不明)" : `${formatNumber(b.whole_universe_pct)}%`;
     return `<div class="ad-breadth">
         <p class="ad-absolute-note">A/Dラインの絶対値には意味がありません。傾きと指数との乖離を見ます。</p>
-        <div><span>当日の上昇比率</span><strong>${escapeHtml(latest)}</strong></div>
-        <div><span>直近${escapeHtml(String(b.average_window))}日平均</span><strong>${escapeHtml(average)}</strong></div>
+        <div><span>上昇比率 (値上がり+値下がり中)</span><strong>${escapeHtml(latest)}</strong></div>
+        <div><span>直近${escapeHtml(String(b.average_window))}日平均 (値動き中)</span><strong>${escapeHtml(average)}</strong></div>
+        <div><span>全銘柄ベース上昇比率</span><strong>${escapeHtml(totalRatio)}</strong></div>
         <p>${escapeHtml(b.reading)} 目安: 50%前後は拮抗、70%以上は強い、30%以下は弱い。</p>
     </div>
     ${buildAdComparison(ind.comparison)}
@@ -139,7 +144,7 @@ function renderIndicatorCard(ind, localMode) {
     if ((status === "ok" || status === "stale") && ind.latest) {
         const s = ind.stats || {};
         const short = Number(s.count) < MIN_HISTORY_POINTS;
-        const adLine = ind.id === "ad_line";
+        const adLine = ind.id === "ad_line" || ind.id.startsWith("ad_line_");
         body = `
             <div class="macro-value">${escapeHtml(formatValue(ind.latest.value, ind.unit))}</div>
             <div class="macro-asof">最新観測日: ${escapeHtml(ind.latest.date)} ／ ${escapeHtml(ind.frequency)}</div>
@@ -158,7 +163,8 @@ function renderIndicatorCard(ind, localMode) {
             <div class="macro-asof">更新頻度: ${escapeHtml(ind.frequency)}</div>`;
     }
     const formula = ind.formula ? `<p><strong>算式:</strong> ${escapeHtml(ind.formula)}</p>` : "";
-    const adDetails = localMode && ind.id === "ad_line" && (status === "ok" || status === "stale")
+    const adDetails = localMode && (ind.id === "ad_line" || ind.id.startsWith("ad_line_")) &&
+        (status === "ok" || status === "stale")
         ? buildAdDetails(ind) : "";
     return `
         <article class="macro-card macro-${status}" data-indicator="${escapeHtml(ind.id)}">
