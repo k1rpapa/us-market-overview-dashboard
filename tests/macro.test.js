@@ -57,6 +57,10 @@ test("short accumulated history shows day count instead of historical position",
     assert.match(short, /蓄積3日/);
     assert.doesNotMatch(short, /歴史的位置:/);
     assert.match(m.renderIndicatorCard({ ...okInd, stats: { ...okInd.stats, count: 400 } }), /歴史的位置:/);
+    const ad = m.renderIndicatorCard({
+        ...okInd, id: "ad_line", stats: { ...okInd.stats, count: 3, start: "2026-10-01" }
+    });
+    assert.match(ad, /歴史的位置は参考程度です/);
 });
 
 test("renderMacroHtml empty state, grouping and no composite score", () => {

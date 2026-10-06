@@ -269,7 +269,7 @@ class GenerateTests(unittest.TestCase):
                       cboe=lambda: [], barchart=lambda: None, ad_reader=lambda: (market, series))
         local = self.by_id(fm.generate(allow_restricted=True, now=datetime(2026, 10, 6, tzinfo=timezone.utc), **kwargs))["ad_line"]
         self.assertEqual((local["status"], local["market"], local["latest"]["date"]), ("ok", "NYSE", "2026-10-05"))
-        self.assertEqual(len(local["history"]) if "history" in local else 3, 3)
+        self.assertEqual(local["stats"]["count"], 3)
         stale = self.by_id(fm.generate(allow_restricted=True, now=datetime(2026, 10, 20, tzinfo=timezone.utc), **kwargs))["ad_line"]
         self.assertEqual(stale["status"], "stale")
         public = self.by_id(fm.generate(allow_restricted=False, **kwargs))["ad_line"]

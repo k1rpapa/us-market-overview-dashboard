@@ -40,7 +40,7 @@ python -m http.server 8000 --bind 0.0.0.0 # http://localhost:8000
 - FRED経由の系列は出典(FRED/元機関)を各カードに表示。ICE BofA社債OASなど第三者の再配布制限があるデータと、Yahoo Finance由来の指数・ETF系列(S&P500、SPY/RSP、VIX)は、公開JSONに値・履歴を含めず「再配布制限」と表示します。
 - 公開取得を接続した系列: Shiller CAPE (shillerdata.com の最新ie_data.xls。取得できない場合のみ更新停止中のYale版へ代替), CAPE earnings-yield minus real-yield proxy (ERP), FINRA margin debit balances, CFTC S&P 500 leveraged-fund net positions/open interest, NY Fed ACM 10-year term premium, NY Fed 12-month recession probability, NY Fed/Equifax credit-card and auto-loan flows into 30+ and 90+ day delinquency. NY Fed/Census core capital goods orders and FRB SLOOS remain connected through FRED.
 - CAPE/ERP: Shiller's maintained site (shillerdata.com) is used and currently extends to 2026-09 (the Yale copy ends 2023-09 and is only a fallback). The latest months use estimated CPI/earnings per the source notes. ERP is a CAPE-based proxy.
-- Recession probability: the NY Fed CSV ends at 2017-06, so the card falls back to a clearly labeled proxy computed here from FRED T10Y3M with the published probit (P = 100 ? ?(?0.5333 ? 0.6330 ? monthly mean 10y?3m spread), 12 months ahead). Over the overlap with the official CSV the mean absolute difference is 0.07 points. It is not an official NY Fed release.
+- Recession probability: the NY Fed CSV ends at 2017-06, so the card falls back to a clearly labeled proxy computed here from FRED T10Y3M with the published probit (P = 100 × Φ(−0.5333 − 0.6330 × monthly mean 10y−3m spread), 12 months ahead). Over the overlap with the official CSV the mean absolute difference is 0.07 points. It is not an official NY Fed release.
 - Cboe's downloadable total put/call CSV ends in 2019 and is stale. Cboe's newer daily statistics are only on its website/undocumented endpoints, and Cboe's terms prohibit automated access, so they are not fetched; the Put/Call card stays local-only and stale with a link to the source.
 - The Cboe total put/call CSV is available and parsed in local mode only; Cboe states its use is subject to Cboe Website Terms and Conditions, so its values/history are excluded from the public JSON.
 - A/D line: no free, officially licensed API/CSV exists (NYSE/Nasdaq historical breadth is sold via market-data products; Nasdaq Data Link/Stooq/StockCharts/WSJ either require paid access, block automation, or forbid redistribution; FRED has no such series). It is therefore a local-only manual-CSV series (see below), restricted in public JSON/AI prompts. The remaining items - the share of S&P constituents above their 200-day averages, and new-high/new-low breadth remain disconnected. Reconstructing these from hundreds of symbols via yfinance would create large, repeated automated downloads from an unofficial Yahoo Finance client, with rate-limit and Yahoo terms-of-use risk. No constituent history is automatically downloaded.
@@ -72,9 +72,17 @@ Barchartの履歴CSVはプランによっては使えないため、当日の終
 - 注意: Gemini API の無料枠では入力が Google の製品改善に使われ得ます。制限データを含むローカル分析には課金済みキーを推奨します。
 
 
-### ??(A/D)??? ??CSV (??????)
-?????????????????????`local_data/ad_issues.csv` (gitignore??????? `AD_ISSUES_CSV` ????) ???? advancing/declining issues ????????????? (`macro.json`/`insights.json`) ????????????????????????
-- ??: ???? `date,market,advances,declines[,unchanged]`?`date` ? `YYYY-MM-DD` / `MM/DD/YYYY`?`market` ? `NYSE` / `NASDAQ` ?(????????????)??: `2026-10-02,NYSE,1500,1700`?
-- ????: A/D??? = ?(advances ? declines) ???????(unchanged???????CSV????)???? `AD_MARKET` ???(???? NYSE ????NYSE??????????)???????????????????S&P500???A/D??????????????????
-- ?????: ??????????NYSE/Nasdaq Market Diary?Barchart(`$ADRN`?)?EODData??????????????????/????????????????????????
-- ??????7??????? `stale` ??????????????????????CSV?????????????????
+### 騰落(A/D)ラインの手動CSV入力 (ローカル専用)
+公式の無料・再配布可能な自動取得経路がないため、日次の advancing/declining issues を手動で記録します。CSV は `local_data/ad_issues.csv` (gitignore済み) に保存され、`AD_ISSUES_CSV` 環境変数で保存先を変更できます。再配布制限データとして扱い、公開版 (`macro.json`/`insights.json`) に値や履歴は含まれません。
+
+毎日の入力手順:
+1. NYSE または Nasdaq の Market Diary、もしくは契約中のデータサービスで advancing / declining / unchanged issues を確認します。個人閲覧の範囲内で利用し、提供元の利用条件に従ってください。画面値の再配布、公開JSONへの追加、第三者への共有はしないでください。
+2. リポジトリのフォルダーで次を実行します。`--date` を省略するとPCの当日の日付になります。
+   ```powershell
+   python add_ad.py --market NYSE --adv 1500 --dec 1700 --unch 100
+   python fetch_macro.py --local
+   ```
+   日付を指定する場合は `--date 2026-10-05` のようにします。同じ日付・市場を再入力すると置き換わり、別市場の行は保持されます。`--unch` は省略可能で、その場合は 0 です。
+3. ローカル版を開き、A/Dカードを確認します。CSVを更新するまで値は変わりません。最終観測が7日超前の場合は `stale` と表示します。
+
+CSVヘッダーは自動作成されます。形式は `date,market,advances,declines,unchanged` です。A/Dラインは日次の advances − declines を時系列累積します(unchangedは除外)。`AD_MARKET` で対象市場を指定できます。初期は少数の観測日となるためカードに「蓄積N日」と表示し、歴史的位置は参考程度とします。CSVに入力した元系列の累積起点は最初の観測日であり、絶対水準ではなく方向と指数との乖離を見る指標です。S&P 500構成銘柄限定のA/Dは対象外です。
