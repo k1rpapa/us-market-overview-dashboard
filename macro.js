@@ -83,7 +83,7 @@ function renderIndicatorCard(ind) {
             <div class="macro-spark">${buildSparkline(ind.history)}</div>
             ${short ? "" : buildRangeBar(s, ind.latest.value)}
             ${short
-                ? `<div class="macro-stats">蓄積${escapeHtml(String(s.count))}日（${escapeHtml(s.start)}〜）: 観測日数が少ないため歴史的位置は表示しません。</div>`
+                ? `<div class="macro-stats">蓄積${escapeHtml(String(s.count))}日（${escapeHtml(s.start)}〜）: ${ind.id === "ad_line" ? "蓄積が少ないため歴史的位置は参考程度です。" : "観測日数が少ないため歴史的位置は表示しません。"}</div>`
                 : `<div class="macro-stats">歴史的位置: <strong>${escapeHtml(percentileLabel(s.percentile))}</strong>
                 （${escapeHtml(s.start)}〜 / 中央値 ${escapeHtml(formatNumber(s.median))}）</div>`}`;
     } else {

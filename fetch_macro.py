@@ -77,9 +77,10 @@ SPECS = [
     _spec("ad_line", "momentum", "騰落(A/D)ライン",
           "値上がり銘柄数−値下がり銘柄数の累積。",
           "指数が上昇してもA/Dが伴わなければ上昇の裾野が狭い。",
-          "取引所ごとに定義が異なる。", "NYSE / Nasdaq (商用ベンダー)",
-          "https://www.nyse.com/market-data", "日次",
-          reason="公的な全銘柄騰落データの安定取得手段がないため未接続。"),
+          "取引所ごとに定義が異なる。", "NYSE / Nasdaq 日次 advancing/declining issues (手動CSV・ローカル専用)",
+          "https://www.nyse.com/market-data", "日次 (手動CSV)", kind="ad_manual", restricted=True,
+          formula="A/Dライン = Σ(日次 advancing issues − declining issues)。unchangedは含めない。",
+          reason="local_data/ad_issues.csv が未配置です。公式の無料取得APIがないため、日次のadvancing/declining issuesをCSVで蓄積してください(README参照)。"),
     _spec("pct_above_200d", "momentum", "200日線上銘柄比率",
           "指数構成銘柄のうち終値が200日線より上にある割合。",
           "高いほど上昇の裾野が広い。極端な低下は広範な弱さ。",
@@ -397,6 +398,70 @@ def read_barchart_cpcs(path=None):
         return parse_barchart_csv(handle.read())
 
 
+AD_CSV_DEFAULT = os.path.join("local_data", "ad_issues.csv")
+AD_STALE_DAYS = 7
+
+
+def parse_ad_csv(text, market=None):
+    """Parse manual daily advancing/declining issue counts into (market, [(date, cumulative net advances)])."""
+    rows = list(csv.reader(io.StringIO(text.lstrip("\ufeff"))))
+    names = None
+    start = 0
+    for index, row in enumerate(rows):
+        lowered = [c.strip().lower() for c in row]
+        if "date" in lowered and any(n in lowered for n in ("advances", "advancing", "adv")) \
+                and any(n in lowered for n in ("declines", "declining", "dec", "decl")):
+            names, start = lowered, index + 1
+            break
+    if names is None:
+        raise ValueError("A/D CSV needs date, advances, declines columns")
+
+    def col(*keys):
+        return next((names.index(k) for k in keys if k in names), None)
+
+    d_i, a_i, c_i = col("date"), col("advances", "advancing", "adv"), col("declines", "declining", "dec", "decl")
+    m_i = col("market", "exchange")
+    daily = {}
+    for row in rows[start:]:
+        try:
+            date = None
+            for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%Y/%m/%d"):
+                try:
+                    date = datetime.strptime(row[d_i].strip(), fmt).strftime("%Y-%m-%d")
+                    break
+                except ValueError:
+                    pass
+            if date is None:
+                continue
+            adv = float(row[a_i].replace(",", ""))
+            dec = float(row[c_i].replace(",", ""))
+            label = row[m_i].strip().upper() if m_i is not None and row[m_i].strip() else "UNSPECIFIED"
+        except (IndexError, ValueError):
+            continue
+        daily.setdefault(label, {})[date] = adv - dec
+    if not daily:
+        raise ValueError("A/D CSV has no observations")
+    wanted = (market or "").strip().upper()
+    if wanted and wanted not in daily:
+        raise ValueError("A/D CSV has no rows for the requested market")
+    chosen = wanted or ("NYSE" if "NYSE" in daily else sorted(daily)[0])
+    total, series = 0.0, []
+    for date in sorted(daily[chosen]):
+        total += daily[chosen][date]
+        series.append((date, total))
+    return chosen, series
+
+
+def read_ad_line(path=None):
+    """Return (market, cumulative series) from a manually placed CSV, or None when absent."""
+    path = path or os.environ.get("AD_ISSUES_CSV") or os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), AD_CSV_DEFAULT)
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8-sig") as handle:
+        return parse_ad_csv(handle.read(), os.environ.get("AD_MARKET"))
+
+
 def fetch_cboe_put_call(http_get=_http_get):
     url = "https://cdn.cboe.com/resources/options/volume_and_call_put_ratios/totalpc.csv"
     rows = csv.reader(io.StringIO(http_get(url, timeout=60)))
@@ -660,7 +725,7 @@ def build_indicator(spec, series=None, error=None, allow_restricted=False):
 def generate(fred=fetch_fred, eia=fetch_eia, yf_close=_yf_close, now=None, allow_restricted=False,
              shiller=fetch_shiller, finra=fetch_finra_margin, acm=fetch_acm, cot=fetch_cot,
              nyfed_hhdc=fetch_nyfed_hhdc, recession=fetch_nyfed_recession,
-             cboe=fetch_cboe_put_call, barchart=read_barchart_cpcs):
+             cboe=fetch_cboe_put_call, barchart=read_barchart_cpcs, ad_reader=read_ad_line):
     cache = {}
     results = {}
     errors = {}
@@ -710,6 +775,11 @@ def generate(fred=fetch_fred, eia=fetch_eia, yf_close=_yf_close, now=None, allow
                     proxies[spec["id"] + "_barchart"] = True
                 else:
                     results[spec["id"]] = cboe()
+            elif kind == "ad_manual":
+                loaded = ad_reader()
+                if loaded:
+                    proxies[spec["id"] + "_market"] = loaded[0]
+                    results[spec["id"]] = loaded[1]
             elif kind == "cftc":
                 results[spec["id"]] = cot(p)
             elif kind == "nyfed_hhdc":
@@ -755,6 +825,22 @@ def generate(fred=fetch_fred, eia=fetch_eia, yf_close=_yf_close, now=None, allow
             item["caution"] = ("Barchartの利用条件に従い公開しない。手入力/手動CSVの最終行が観測日で、入力するまで更新されない。 "
                                + item["caution"])
             item["frequency"] = "日次 (手動入力・蓄積)"
+        if proxies.get(item["id"] + "_market") and item.get("latest"):
+            market = proxies[item["id"] + "_market"]
+            item["market"] = market
+            item["name"] = f"騰落(A/D)ライン ({market})"
+            item["definition"] = (f"{market}の日次 advancing issues − declining issues を時系列で累積した値。"
+                                  "unchangedは除外。累積起点はCSVの最初の日で、絶対水準ではなく方向と指数との乖離を見る。")
+            item["caution"] = ("手動CSV(ローカル専用・公開しない)。行を追加するまで更新されず、最終観測日が7日超前ならstale。 "
+                               + item["caution"])
+        if item.get("latest") and item["id"] == "ad_line":
+            try:
+                observation = datetime.strptime(item["latest"]["date"], "%Y-%m-%d").date()
+                if (generated_dt.date() - observation).days > AD_STALE_DAYS:
+                    item["status"] = "stale"
+                    item["reason"] = f"最終観測日が{AD_STALE_DAYS}日超前です。現在値として扱わないでください。"
+            except ValueError:
+                pass
         if item.get("latest") and item["id"] in ("cape", "erp", "recession_prob", "put_call"):
             try:
                 observation = datetime.strptime(item["latest"]["date"], "%Y-%m-%d").date()

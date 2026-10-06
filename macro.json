@@ -2702,13 +2702,13 @@
    "definition": "値上がり銘柄数−値下がり銘柄数の累積。",
    "reading": "指数が上昇してもA/Dが伴わなければ上昇の裾野が狭い。",
    "caution": "取引所ごとに定義が異なる。",
-   "source": "NYSE / Nasdaq (商用ベンダー)",
+   "source": "NYSE / Nasdaq 日次 advancing/declining issues (手動CSV・ローカル専用)",
    "source_url": "https://www.nyse.com/market-data",
-   "frequency": "日次",
+   "frequency": "日次 (手動CSV)",
    "unit": "",
-   "formula": "",
-   "status": "pending",
-   "reason": "公的な全銘柄騰落データの安定取得手段がないため未接続。"
+   "formula": "A/Dライン = Σ(日次 advancing issues − declining issues)。unchangedは含めない。",
+   "status": "restricted",
+   "reason": "第三者(指数提供元/データ配信元)の再配布制限があるため、公開リポジトリでは値・履歴を掲載しません。出典リンク先で確認してください。"
   },
   {
    "id": "pct_above_200d",

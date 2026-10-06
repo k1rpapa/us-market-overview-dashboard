@@ -16,6 +16,24 @@ class T(unittest.TestCase):
         self.assertNotIn("HY OAS", s); self.assertNotIn("3.1", s)
         self.assertIn("NFCI", s)
 
+    def test_public_ad_values_excluded_from_prompt_and_output(self):
+        data = mk()
+        data["indicators"].append({
+            "id": "ad_line", "group": "g1", "name": "A/D line (NYSE)",
+            "status": "restricted", "restricted": True,
+            "latest": {"date": "2026-10-05", "value": 12345},
+            "history": [["2026-10-04", 10000], ["2026-10-05", 12345]],
+        })
+        calls = []
+
+        def post(url, body, key):
+            calls.append(body)
+            return {"candidates": [{"content": {"parts": [{"text": "市場の上昇を確認"}]}}]}
+
+        out = I.generate_insights(data, api_key="k", post=post)
+        self.assertNotIn("12345", json.dumps(calls, ensure_ascii=False))
+        self.assertNotIn("12345", json.dumps(out, ensure_ascii=False))
+
     def test_public_rejects_local_data(self):
         with self.assertRaises(ValueError):
             I.build_category_inputs(mk(True), False)

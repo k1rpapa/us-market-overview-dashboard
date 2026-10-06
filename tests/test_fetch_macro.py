@@ -250,6 +250,35 @@ class GenerateTests(unittest.TestCase):
         self.assertEqual(public["status"], "restricted")
         self.assertNotIn("latest", public)
 
+    def test_ad_line_cumulative_markets_stale_and_restricted(self):
+        text = ('date,market,advances,declines,unchanged\n'
+                '2026-10-01,NYSE,"1,500",1000,100\n2026-10-02,NYSE,800,1700,50\n'
+                '2026-10-02,NASDAQ,2000,1000,0\n10/05/2026,NYSE,1200,1300,10\n')
+        market, series = fm.parse_ad_csv(text)
+        self.assertEqual(market, "NYSE")
+        self.assertEqual(series, [("2026-10-01", 500.0), ("2026-10-02", -400.0), ("2026-10-05", -500.0)])
+        self.assertEqual(fm.parse_ad_csv(text, "nasdaq"), ("NASDAQ", [("2026-10-02", 1000.0)]))
+        with self.assertRaises(ValueError):
+            fm.parse_ad_csv(text, "SP500")
+        with self.assertRaises(ValueError):
+            fm.parse_ad_csv("a,b\n1,2\n")
+        self.assertIsNone(fm.read_ad_line(os.path.join(tempfile.gettempdir(), "missing-ad.csv")))
+        kwargs = dict(fred=lambda s: [], eia=lambda _: [], yf_close=lambda _: [],
+                      shiller=lambda: [], finra=lambda: [], acm=lambda: [], cot=lambda _: [],
+                      nyfed_hhdc=lambda *_a, **_k: [], recession=lambda: [],
+                      cboe=lambda: [], barchart=lambda: None, ad_reader=lambda: (market, series))
+        local = self.by_id(fm.generate(allow_restricted=True, now=datetime(2026, 10, 6, tzinfo=timezone.utc), **kwargs))["ad_line"]
+        self.assertEqual((local["status"], local["market"], local["latest"]["date"]), ("ok", "NYSE", "2026-10-05"))
+        self.assertEqual(local["stats"]["count"], 3)
+        stale = self.by_id(fm.generate(allow_restricted=True, now=datetime(2026, 10, 20, tzinfo=timezone.utc), **kwargs))["ad_line"]
+        self.assertEqual(stale["status"], "stale")
+        public = self.by_id(fm.generate(allow_restricted=False, **kwargs))["ad_line"]
+        self.assertEqual(public["status"], "restricted")
+        self.assertNotIn("latest", public)
+        self.assertNotIn("market", public)
+        missing = self.by_id(fm.generate(allow_restricted=True, **dict(kwargs, ad_reader=lambda: None)))["ad_line"]
+        self.assertEqual(missing["status"], "unavailable")
+
     def test_add_putcall_appends_overwrites_and_rejects_bad_input(self):
         import add_putcall as ap
         today = datetime(2026, 10, 4).date()
