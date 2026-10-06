@@ -68,22 +68,88 @@ function buildRangeBar(stats, latestValue) {
         `<div class="range-labels"><span>${escapeHtml(formatNumber(stats.min))}</span><span>${escapeHtml(formatNumber(stats.max))}</span></div>`;
 }
 
+function buildAdComparison(comparison) {
+    const rows = (comparison && comparison.series) || [];
+    if (rows.length < 2) {
+        return `<p class="ad-reading">${escapeHtml(comparison && comparison.reading || "比較できる共通履歴がありません。")}</p>`;
+    }
+    const width = 480, height = 150, pad = 8;
+    const project = column => {
+        const values = rows.map(row => row[column]);
+        const min = Math.min(...values), range = Math.max(...values) - min || 1;
+        return values.map((value, index) => {
+            const x = pad + index / (values.length - 1) * (width - pad * 2);
+            const y = height - pad - (value - min) / range * (height - pad * 2);
+            return `${x.toFixed(1)},${y.toFixed(1)}`;
+        }).join(" ");
+    };
+    const first = rows[0][0], last = rows[rows.length - 1][0];
+    return `<div class="ad-compare-chart">
+        <div class="ad-legend"><span class="ad-legend-line">A/D累積差 (基準日比)</span><span class="ad-legend-index">${escapeHtml(comparison.index_name)} (基準日比%)</span></div>
+        <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="A/Dラインと${escapeHtml(comparison.index_name)}の同期間推移。縦軸はそれぞれ独立スケール">
+            <line x1="${pad}" y1="${height / 2}" x2="${width - pad}" y2="${height / 2}" class="ad-zero"/>
+            <polyline points="${project(1)}" class="ad-line-path"/>
+            <polyline points="${project(2)}" class="ad-index-path"/>
+        </svg>
+        <div class="ad-chart-dates"><span>${escapeHtml(first)}</span><span>${escapeHtml(last)}</span></div>
+        <p class="ad-reading">${escapeHtml(comparison.reading)} <small>縦軸は線ごとに独立スケールです。</small></p>
+    </div>`;
+}
+
+function buildAdDailyBars(dailyNet) {
+    const rows = (dailyNet || []).filter(row => Array.isArray(row) && typeof row[1] === "number");
+    if (!rows.length) return "";
+    const width = 480, height = 92, pad = 4, zero = height / 2;
+    const maxAbs = Math.max(1, ...rows.map(row => Math.abs(row[1])));
+    const slot = (width - pad * 2) / rows.length;
+    const bars = rows.map((row, i) => {
+        const barHeight = Math.max(1, Math.abs(row[1]) / maxAbs * (zero - pad));
+        const x = pad + i * slot + slot * 0.1;
+        const y = row[1] >= 0 ? zero - barHeight : zero;
+        return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(1, slot * 0.8).toFixed(1)}" height="${barHeight.toFixed(1)}" class="${row[1] >= 0 ? "ad-bar-up" : "ad-bar-down"}"><title>${escapeHtml(row[0])}: ${escapeHtml(formatNumber(row[1]))}</title></rect>`;
+    }).join("");
+    return `<div class="ad-daily-chart"><strong>日次 advance − decline</strong>
+        <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="直近の日次値上がり銘柄数から値下がり銘柄数を引いた棒グラフ">
+            <line x1="${pad}" y1="${zero}" x2="${width - pad}" y2="${zero}" class="ad-zero"/>${bars}
+        </svg>
+        <div class="ad-chart-dates"><span>${escapeHtml(rows[0][0])}</span><span>${escapeHtml(rows[rows.length - 1][0])}</span></div>
+    </div>`;
+}
+
+function buildAdDetails(ind) {
+    if (!ind.breadth) return "";
+    const b = ind.breadth;
+    const latest = b.advance_pct == null ? "—" : `${formatNumber(b.advance_pct)}%`;
+    const average = b.average_pct == null ? "—" : `${formatNumber(b.average_pct)}%`;
+    return `<div class="ad-breadth">
+        <p class="ad-absolute-note">A/Dラインの絶対値には意味がありません。傾きと指数との乖離を見ます。</p>
+        <div><span>当日の上昇比率</span><strong>${escapeHtml(latest)}</strong></div>
+        <div><span>直近${escapeHtml(String(b.average_window))}日平均</span><strong>${escapeHtml(average)}</strong></div>
+        <p>${escapeHtml(b.reading)} 目安: 50%前後は拮抗、70%以上は強い、30%以下は弱い。</p>
+    </div>
+    ${buildAdComparison(ind.comparison)}
+    ${buildAdDailyBars(ind.daily_net)}`;
+}
+
 const MIN_HISTORY_POINTS = 30;
 
-function renderIndicatorCard(ind) {
+function renderIndicatorCard(ind, localMode) {
     const status = ind.status in MACRO_STATUS_LABELS ? ind.status : "unavailable";
     let body;
     if ((status === "ok" || status === "stale") && ind.latest) {
         const s = ind.stats || {};
         const short = Number(s.count) < MIN_HISTORY_POINTS;
+        const adLine = ind.id === "ad_line";
         body = `
             <div class="macro-value">${escapeHtml(formatValue(ind.latest.value, ind.unit))}</div>
             <div class="macro-asof">最新観測日: ${escapeHtml(ind.latest.date)} ／ ${escapeHtml(ind.frequency)}</div>
             ${status === "stale" ? `<div class="macro-unavailable">${escapeHtml(ind.reason)}</div>` : ""}
             <div class="macro-spark">${buildSparkline(ind.history)}</div>
-            ${short ? "" : buildRangeBar(s, ind.latest.value)}
-            ${short
-                ? `<div class="macro-stats">蓄積${escapeHtml(String(s.count))}日（${escapeHtml(s.start)}〜）: ${ind.id === "ad_line" ? "蓄積が少ないため歴史的位置は参考程度です。" : "観測日数が少ないため歴史的位置は表示しません。"}</div>`
+            ${short || adLine ? "" : buildRangeBar(s, ind.latest.value)}
+            ${adLine
+                ? `<div class="macro-stats">蓄積${escapeHtml(String(s.count))}日（${escapeHtml(s.start)}〜）。累積値の歴史的位置ではなく傾きと指数との乖離を確認してください。</div>`
+                : short
+                ? `<div class="macro-stats">蓄積${escapeHtml(String(s.count))}日（${escapeHtml(s.start)}〜）: 観測日数が少ないため歴史的位置は表示しません。</div>`
                 : `<div class="macro-stats">歴史的位置: <strong>${escapeHtml(percentileLabel(s.percentile))}</strong>
                 （${escapeHtml(s.start)}〜 / 中央値 ${escapeHtml(formatNumber(s.median))}）</div>`}`;
     } else {
@@ -92,6 +158,8 @@ function renderIndicatorCard(ind) {
             <div class="macro-asof">更新頻度: ${escapeHtml(ind.frequency)}</div>`;
     }
     const formula = ind.formula ? `<p><strong>算式:</strong> ${escapeHtml(ind.formula)}</p>` : "";
+    const adDetails = localMode && ind.id === "ad_line" && (status === "ok" || status === "stale")
+        ? buildAdDetails(ind) : "";
     return `
         <article class="macro-card macro-${status}" data-indicator="${escapeHtml(ind.id)}">
             <div class="macro-card-head">
@@ -99,6 +167,7 @@ function renderIndicatorCard(ind) {
                 <span class="macro-status status-${status}">${MACRO_STATUS_LABELS[status]}</span>
             </div>
             ${body}
+            ${adDetails}
             <details class="macro-details">
                 <summary>定義・読み方・注意点</summary>
                 <p><strong>定義:</strong> ${escapeHtml(ind.definition)}</p>
@@ -138,7 +207,7 @@ function renderMacroHtml(data, insights) {
         const insight = renderInsightBlock(`AIアナリスト分析: ${g.name}`,
             insights && insights.categories && insights.categories[g.id], insights);
         return `<section class="macro-group"><h3 class="macro-group-title">${escapeHtml(g.name)}</h3>` + insight +
-            `<div class="macro-grid">${items.map(renderIndicatorCard).join("")}</div></section>`;
+            `<div class="macro-grid">${items.map(item => renderIndicatorCard(item, Boolean(data.local_only))).join("")}</div></section>`;
     }).join("");
     const ok = indicators.filter(i => i.status === "ok").length;
     const summary = `<p class="macro-summary">取得済み ${ok} / ${indicators.length} 指標` +

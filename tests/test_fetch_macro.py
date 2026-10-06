@@ -279,6 +279,38 @@ class GenerateTests(unittest.TestCase):
         missing = self.by_id(fm.generate(allow_restricted=True, **dict(kwargs, ad_reader=lambda: None)))["ad_line"]
         self.assertEqual(missing["status"], "unavailable")
 
+    def test_ad_breadth_and_index_divergence_are_local_only(self):
+        records = []
+        cumulative = []
+        value = 0
+        for day in range(1, 12):
+            adv, dec = (110, 100) if day < 11 else (50, 200)
+            value += adv - dec
+            records.append((f"2026-09-{day:02d}", adv, dec, 10))
+            cumulative.append((f"2026-09-{day:02d}", value))
+        index = [(f"2026-09-{day:02d}", float(100 + day)) for day in range(1, 11)]
+        index.append(("2026-09-11", 120.0))
+        kwargs = dict(fred=lambda s: [], eia=lambda _: [], yf_close=lambda ticker: index if ticker == "^NYA" else [],
+                      shiller=lambda: [], finra=lambda: [], acm=lambda: [], cot=lambda _: [],
+                      nyfed_hhdc=lambda *_a, **_k: [], recession=lambda: [],
+                      cboe=lambda: [], barchart=lambda: None, ad_reader=lambda: ("NYSE", cumulative),
+                      ad_records_reader=lambda: ("NYSE", records),
+                      now=datetime(2026, 9, 11, tzinfo=timezone.utc))
+        local = self.by_id(fm.generate(allow_restricted=True, **kwargs))["ad_line"]
+        self.assertEqual(local["breadth"]["advance_pct"], 20.0)
+        self.assertEqual(local["breadth"]["average_window"], 10)
+        self.assertEqual(local["daily_net"][-1], ["2026-09-11", -150])
+        self.assertIn("高値を更新", local["comparison"]["reading"])
+        self.assertIn("可能性を示唆", local["comparison"]["reading"])
+        self.assertEqual(local["comparison"]["ticker"], "^NYA")
+        self.assertEqual(local["comparison"]["series"][0][1:], [0, 0.0])
+        self.assertLess(local["comparison"]["series"][-1][1], 0)
+        self.assertGreater(local["comparison"]["series"][-1][2], 0)
+        public = self.by_id(fm.generate(allow_restricted=False, **kwargs))["ad_line"]
+        self.assertEqual(public["status"], "restricted")
+        for field in ("latest", "history", "breadth", "daily_net", "comparison"):
+            self.assertNotIn(field, public)
+
     def test_add_putcall_appends_overwrites_and_rejects_bad_input(self):
         import add_putcall as ap
         today = datetime(2026, 10, 4).date()
