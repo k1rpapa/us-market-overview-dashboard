@@ -60,7 +60,42 @@ test("short accumulated history shows day count instead of historical position",
     const ad = m.renderIndicatorCard({
         ...okInd, id: "ad_line", stats: { ...okInd.stats, count: 3, start: "2026-10-01" }
     });
-    assert.match(ad, /歴史的位置は参考程度です/);
+    assert.match(ad, /蓄積3日/);
+    assert.match(ad, /傾きと指数との乖離を確認/);
+});
+
+test("local A/D card shows breadth, comparison, net bars; public restricted card hides them", () => {
+    const ad = {
+        ...okInd, id: "ad_line", name: "騰落(A/D)ライン (NYSE)",
+        breadth: { advance_pct: 72.5, average_pct: 61.2, average_window: 10, reading: "当日は値上がり優勢。" },
+        comparison: {
+            index_name: "NYSE Composite",
+            series: [["2026-10-01", 10, 20000], ["2026-10-02", 8, 20100]],
+            reading: "指数は高値を更新する一方、A/D低下が弱まりを示唆します。"
+        },
+        daily_net: [["2026-10-01", 100], ["2026-10-02", -80]]
+    };
+    const local = m.renderMacroHtml({
+        local_only: true, groups: [{ id: "credit", name: "信用" }], indicators: [ad]
+    });
+    assert.match(local, /当日の上昇比率/);
+    assert.match(local, /72\.5%/);
+    assert.match(local, /直近10日平均/);
+    assert.match(local, /指数は高値を更新/);
+    assert.match(local, /ad-index-path/);
+    assert.match(local, /ad-bar-down/);
+    assert.match(local, /A\/Dラインの絶対値には意味がありません/);
+    const longerAd = m.renderIndicatorCard({
+        ...ad, stats: { ...okInd.stats, count: 400, start: "2020-01-01" }
+    });
+    assert.doesNotMatch(longerAd, /歴史的位置:/);
+
+    const publicHtml = m.renderMacroHtml({
+        groups: [{ id: "credit", name: "信用" }],
+        indicators: [{ ...ad, status: "restricted", latest: undefined, history: undefined }]
+    });
+    assert.match(publicHtml, /再配布制限/);
+    assert.doesNotMatch(publicHtml, /上昇比率|弱まりを示唆|20100|ad-index-path|ad-bar-down/);
 });
 
 test("renderMacroHtml empty state, grouping and no composite score", () => {

@@ -404,6 +404,16 @@ AD_STALE_DAYS = 7
 
 def parse_ad_csv(text, market=None):
     """Parse manual daily advancing/declining issue counts into (market, [(date, cumulative net advances)])."""
+    chosen, daily = parse_ad_records(text, market)
+    total, series = 0.0, []
+    for day, advances, declines, _unchanged in daily:
+        total += advances - declines
+        series.append((day, total))
+    return chosen, series
+
+
+def parse_ad_records(text, market=None):
+    """Parse manual daily issue counts into (market, [(date, advances, declines, unchanged)])."""
     rows = list(csv.reader(io.StringIO(text.lstrip("\ufeff"))))
     names = None
     start = 0
@@ -420,6 +430,7 @@ def parse_ad_csv(text, market=None):
         return next((names.index(k) for k in keys if k in names), None)
 
     d_i, a_i, c_i = col("date"), col("advances", "advancing", "adv"), col("declines", "declining", "dec", "decl")
+    u_i = col("unchanged", "unchanged issues", "unch")
     m_i = col("market", "exchange")
     daily = {}
     for row in rows[start:]:
@@ -433,23 +444,25 @@ def parse_ad_csv(text, market=None):
                     pass
             if date is None:
                 continue
-            adv = float(row[a_i].replace(",", ""))
-            dec = float(row[c_i].replace(",", ""))
+            raw_counts = [
+                row[a_i].replace(",", "").strip(),
+                row[c_i].replace(",", "").strip(),
+                row[u_i].replace(",", "").strip() if u_i is not None and row[u_i].strip() else "0",
+            ]
+            if any(not re.fullmatch(r"\d+", value) for value in raw_counts):
+                continue
+            adv, dec, unchanged = map(int, raw_counts)
             label = row[m_i].strip().upper() if m_i is not None and row[m_i].strip() else "UNSPECIFIED"
         except (IndexError, ValueError):
             continue
-        daily.setdefault(label, {})[date] = adv - dec
+        daily.setdefault(label, {})[date] = (adv, dec, unchanged)
     if not daily:
         raise ValueError("A/D CSV has no observations")
     wanted = (market or "").strip().upper()
     if wanted and wanted not in daily:
         raise ValueError("A/D CSV has no rows for the requested market")
     chosen = wanted or ("NYSE" if "NYSE" in daily else sorted(daily)[0])
-    total, series = 0.0, []
-    for date in sorted(daily[chosen]):
-        total += daily[chosen][date]
-        series.append((date, total))
-    return chosen, series
+    return chosen, [(day, *daily[chosen][day]) for day in sorted(daily[chosen])]
 
 
 def read_ad_line(path=None):
@@ -460,6 +473,80 @@ def read_ad_line(path=None):
         return None
     with open(path, encoding="utf-8-sig") as handle:
         return parse_ad_csv(handle.read(), os.environ.get("AD_MARKET"))
+
+
+def read_ad_records(path=None):
+    path = path or os.environ.get("AD_ISSUES_CSV") or os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), AD_CSV_DEFAULT)
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8-sig") as handle:
+        return parse_ad_records(handle.read(), os.environ.get("AD_MARKET"))
+
+
+AD_INDEX_TICKERS = {"NYSE": ("^NYA", "NYSE Composite"), "NASDAQ": ("^IXIC", "Nasdaq Composite")}
+
+
+def ad_breadth_summary(records, window=10):
+    if not records:
+        return None
+    recent = records[-window:]
+    latest_day, advances, declines, unchanged = records[-1]
+    latest_pct = 100 * advances / (advances + declines) if advances + declines else None
+    ratios = [100 * adv / (adv + dec) for _, adv, dec, _ in recent if adv + dec]
+    average = sum(ratios) / len(ratios) if ratios else None
+    if latest_pct is None:
+        reading = "値上がり・値下がりがともに0のため比率を算出できません。"
+    elif latest_pct >= 70:
+        reading = "当日は値上がり優勢(強い目安)。"
+    elif latest_pct <= 30:
+        reading = "当日は値下がり優勢(弱い目安)。"
+    else:
+        reading = "当日は概ね拮抗〜やや優勢です。"
+    return {
+        "date": latest_day, "advances": advances, "declines": declines, "unchanged": unchanged,
+        "advance_pct": round(latest_pct, 2) if latest_pct is not None else None,
+        "average_window": len(ratios), "average_pct": round(average, 2) if average is not None else None,
+        "window": window, "reading": reading,
+    }
+
+
+def compare_ad_index(ad_series, index_series, market):
+    if market not in AD_INDEX_TICKERS:
+        return None
+    ticker, index_name = AD_INDEX_TICKERS[market]
+    index_by_day = dict(index_series)
+    paired = [(day, ad_value, index_by_day[day]) for day, ad_value in ad_series
+              if day in index_by_day and index_by_day[day] > 0]
+    if not paired:
+        return {"ticker": ticker, "index_name": index_name, "series": [],
+                "reading": f"{index_name}との共通観測日がなく、比較できません。"}
+    reading = f"{index_name}とA/Dは同期間で比較中です。"
+    if len(paired) >= 11:
+        recent_start = paired[-11]
+        prior_index_high = max(row[2] for row in paired[-11:-1])
+        prior_index_low = min(row[2] for row in paired[-11:-1])
+        ad_change = paired[-1][1] - recent_start[1]
+        if paired[-1][2] > prior_index_high and ad_change < 0:
+            reading = f"{index_name}が直近10観測日の高値を更新する一方、A/Dは低下しており、上昇の広がりが弱まる可能性を示唆します。"
+        elif paired[-1][2] < prior_index_low and ad_change > 0:
+            reading = f"{index_name}が直近10観測日の安値を更新する一方、A/Dは上昇しており、下落の広がりが弱まる可能性を示唆します。"
+        elif ad_change == 0:
+            reading = f"直近10観測日のA/Dは横ばいで、{index_name}との方向差は明確ではありません。"
+        elif (paired[-1][2] - recent_start[2]) * ad_change < 0:
+            reading = f"直近10観測日で{index_name}とA/Dの方向が異なり、値動きの裾野に乖離がある可能性を示唆します。"
+        else:
+            reading = f"直近10観測日では{index_name}とA/Dは概ね同方向です。"
+    base_ad, base_index = paired[0][1], paired[0][2]
+    chart_series = [
+        (day, ad_value - base_ad, (index_value / base_index - 1) * 100)
+        for day, ad_value, index_value in paired
+    ]
+    return {
+        "ticker": ticker, "index_name": index_name,
+        "series": downsample(chart_series),
+        "reading": reading,
+    }
 
 
 def fetch_cboe_put_call(http_get=_http_get):
@@ -725,7 +812,8 @@ def build_indicator(spec, series=None, error=None, allow_restricted=False):
 def generate(fred=fetch_fred, eia=fetch_eia, yf_close=_yf_close, now=None, allow_restricted=False,
              shiller=fetch_shiller, finra=fetch_finra_margin, acm=fetch_acm, cot=fetch_cot,
              nyfed_hhdc=fetch_nyfed_hhdc, recession=fetch_nyfed_recession,
-             cboe=fetch_cboe_put_call, barchart=read_barchart_cpcs, ad_reader=read_ad_line):
+             cboe=fetch_cboe_put_call, barchart=read_barchart_cpcs, ad_reader=read_ad_line,
+             ad_records_reader=read_ad_records):
     cache = {}
     results = {}
     errors = {}
@@ -778,8 +866,18 @@ def generate(fred=fetch_fred, eia=fetch_eia, yf_close=_yf_close, now=None, allow
             elif kind == "ad_manual":
                 loaded = ad_reader()
                 if loaded:
-                    proxies[spec["id"] + "_market"] = loaded[0]
+                    market = loaded[0]
+                    proxies[spec["id"] + "_market"] = market
                     results[spec["id"]] = loaded[1]
+                    records = ad_records_reader()
+                    if records and records[0] == market:
+                        proxies[spec["id"] + "_records"] = records[1]
+                    index = AD_INDEX_TICKERS.get(market)
+                    if index:
+                        try:
+                            proxies[spec["id"] + "_index"] = (index[0], index[1], yf_close(index[0]))
+                        except Exception as exc:
+                            proxies[spec["id"] + "_index_error"] = type(exc).__name__
             elif kind == "cftc":
                 results[spec["id"]] = cot(p)
             elif kind == "nyfed_hhdc":
@@ -830,9 +928,28 @@ def generate(fred=fetch_fred, eia=fetch_eia, yf_close=_yf_close, now=None, allow
             item["market"] = market
             item["name"] = f"騰落(A/D)ライン ({market})"
             item["definition"] = (f"{market}の日次 advancing issues − declining issues を時系列で累積した値。"
-                                  "unchangedは除外。累積起点はCSVの最初の日で、絶対水準ではなく方向と指数との乖離を見る。")
+                                  "unchangedは除外。絶対値に意味はなく、傾きと指数との乖離を見ます。")
             item["caution"] = ("手動CSV(ローカル専用・公開しない)。行を追加するまで更新されず、最終観測日が7日超前ならstale。 "
                                + item["caution"])
+            records = proxies.get(item["id"] + "_records")
+            if records:
+                item["breadth"] = ad_breadth_summary(records)
+                item["daily_net"] = [[day, round(advances - declines)] for day, advances, declines, _ in records[-30:]]
+                index_data = proxies.get(item["id"] + "_index")
+                if index_data:
+                    item["comparison"] = compare_ad_index(
+                        results[item["id"]], index_data[2], market)
+                    item["comparison"]["ticker"] = index_data[0]
+                    item["comparison"]["index_name"] = index_data[1]
+                    item["comparison"]["source"] = "Yahoo Finance (ローカル比較用・再配布不可)"
+                else:
+                    item["comparison"] = {
+                        "ticker": AD_INDEX_TICKERS.get(market, ("", ""))[0],
+                        "index_name": AD_INDEX_TICKERS.get(market, ("対象指数", ""))[1],
+                        "series": [],
+                        "reading": "比較指数を取得できないため、A/Dとの比較は表示できません。",
+                        "error": proxies.get(item["id"] + "_index_error", "unsupported_market"),
+                    }
         if item.get("latest") and item["id"] == "ad_line":
             try:
                 observation = datetime.strptime(item["latest"]["date"], "%Y-%m-%d").date()

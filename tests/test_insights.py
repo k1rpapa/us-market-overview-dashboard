@@ -23,6 +23,8 @@ class T(unittest.TestCase):
             "status": "restricted", "restricted": True,
             "latest": {"date": "2026-10-05", "value": 12345},
             "history": [["2026-10-04", 10000], ["2026-10-05", 12345]],
+            "breadth": {"advance_pct": 72.5},
+            "comparison": {"reading": "上昇の広がりが弱まる可能性を示唆します。"},
         })
         calls = []
 
@@ -33,6 +35,8 @@ class T(unittest.TestCase):
         out = I.generate_insights(data, api_key="k", post=post)
         self.assertNotIn("12345", json.dumps(calls, ensure_ascii=False))
         self.assertNotIn("12345", json.dumps(out, ensure_ascii=False))
+        self.assertNotIn("示唆", json.dumps(calls, ensure_ascii=False))
+        self.assertNotIn("示唆", json.dumps(out, ensure_ascii=False))
 
     def test_public_rejects_local_data(self):
         with self.assertRaises(ValueError):
