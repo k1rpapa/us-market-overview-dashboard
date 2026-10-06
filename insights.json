@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-05T21:25:29Z",
+ "generated_at": "2026-10-06T00:13:35Z",
  "disclaimer": "AI生成・投資助言ではありません。数値は同ダッシュボードの取得値のみに基づきます。",
  "model": "gemini-3.8-flash",
  "local_only": false,
@@ -14,7 +14,7 @@
   "momentum": {
    "status": "unavailable",
    "reason": "分析できる取得済みデータがありません。",
-   "input_hash": "adbf0b4324315c54565000367098f4d868b9e85af9f2bc900fb0336ac0c872f2"
+   "input_hash": "2883acf5e869b3a319b65c47dfb4c73c96f22dd1a0cc5b16114ae4e0529f8b37"
   },
   "credit": {
    "status": "ok",
