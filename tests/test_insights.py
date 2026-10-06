@@ -18,14 +18,15 @@ class T(unittest.TestCase):
 
     def test_public_ad_values_excluded_from_prompt_and_output(self):
         data = mk()
-        data["indicators"].append({
-            "id": "ad_line", "group": "g1", "name": "A/D line (NYSE)",
-            "status": "restricted", "restricted": True,
-            "latest": {"date": "2026-10-05", "value": 12345},
-            "history": [["2026-10-04", 10000], ["2026-10-05", 12345]],
-            "breadth": {"advance_pct": 72.5},
-            "comparison": {"reading": "上昇の広がりが弱まる可能性を示唆します。"},
-        })
+        for index, universe in enumerate(("all_common", "dow", "sp500", "nyse", "nasdaq")):
+            data["indicators"].append({
+                "id": "ad_line_" + universe, "group": "g1", "name": "A/D line",
+                "status": "restricted", "restricted": True,
+                "latest": {"date": "2026-10-05", "value": 12345 + index},
+                "history": [["2026-10-04", 10000], ["2026-10-05", 12345 + index]],
+                "breadth": {"advance_pct": 72.5},
+                "comparison": {"reading": "上昇の広がりが弱まる可能性を示唆します。"},
+            })
         calls = []
 
         def post(url, body, key):
@@ -33,8 +34,9 @@ class T(unittest.TestCase):
             return {"candidates": [{"content": {"parts": [{"text": "市場の上昇を確認"}]}}]}
 
         out = I.generate_insights(data, api_key="k", post=post)
-        self.assertNotIn("12345", json.dumps(calls, ensure_ascii=False))
-        self.assertNotIn("12345", json.dumps(out, ensure_ascii=False))
+        for value in range(12345, 12350):
+            self.assertNotIn(str(value), json.dumps(calls, ensure_ascii=False))
+            self.assertNotIn(str(value), json.dumps(out, ensure_ascii=False))
         self.assertNotIn("示唆", json.dumps(calls, ensure_ascii=False))
         self.assertNotIn("示唆", json.dumps(out, ensure_ascii=False))
 
@@ -79,6 +81,9 @@ class T(unittest.TestCase):
 
     def test_public_output_with_restricted_terms_rejected(self):
         post = lambda u, b, k: {"candidates": [{"content": {"parts": [{"text": "HY OASは3.1"}]}}]}
+        out = I.generate_insights(mk(), api_key="k", post=post)
+        self.assertEqual(out["categories"]["g1"]["status"], "unavailable")
+        post = lambda u, b, k: {"candidates": [{"content": {"parts": [{"text": "A/Dの上昇の広がりが弱まる可能性を示唆"}]}}]}
         out = I.generate_insights(mk(), api_key="k", post=post)
         self.assertEqual(out["categories"]["g1"]["status"], "unavailable")
         out = I.generate_insights(mk(True), api_key="k", post=post, allow_restricted=True)

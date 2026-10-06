@@ -70,6 +70,7 @@ test("local A/D card shows breadth, comparison, net bars; public restricted card
         breadth: { advance_pct: 72.5, average_pct: 61.2, average_window: 10, reading: "当日は値上がり優勢。" },
         comparison: {
             index_name: "NYSE Composite",
+            comparison_type: "reference",
             series: [["2026-10-01", 10, 20000], ["2026-10-02", 8, 20100]],
             reading: "指数は高値を更新する一方、A/D低下が弱まりを示唆します。"
         },
@@ -78,9 +79,12 @@ test("local A/D card shows breadth, comparison, net bars; public restricted card
     const local = m.renderMacroHtml({
         local_only: true, groups: [{ id: "credit", name: "信用" }], indicators: [ad]
     });
-    assert.match(local, /当日の上昇比率/);
+    assert.match(local, /上昇比率 \(値上がり\+値下がり中\)/);
     assert.match(local, /72\.5%/);
     assert.match(local, /直近10日平均/);
+    assert.match(local, /全銘柄ベース上昇比率/);
+    assert.match(local, /算出不可/);
+    assert.match(local, /参考指数/);
     assert.match(local, /指数は高値を更新/);
     assert.match(local, /ad-index-path/);
     assert.match(local, /ad-bar-down/);

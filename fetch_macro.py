@@ -77,7 +77,7 @@ SPECS = [
     _spec("ad_line", "momentum", "騰落(A/D)ライン",
           "値上がり銘柄数−値下がり銘柄数の累積。",
           "指数が上昇してもA/Dが伴わなければ上昇の裾野が狭い。",
-          "取引所ごとに定義が異なる。", "NYSE / Nasdaq 日次 advancing/declining issues (手動CSV・ローカル専用)",
+          "5つの市場/構成銘柄ユニバースを個別に扱います。", "手動入力のadvancing/declining issues (ローカル専用)",
           "https://www.nyse.com/market-data", "日次 (手動CSV)", kind="ad_manual", restricted=True,
           formula="A/Dライン = Σ(日次 advancing issues − declining issues)。unchangedは含めない。",
           reason="local_data/ad_issues.csv が未配置です。公式の無料取得APIがないため、日次のadvancing/declining issuesをCSVで蓄積してください(README参照)。"),
@@ -400,13 +400,20 @@ def read_barchart_cpcs(path=None):
 
 AD_CSV_DEFAULT = os.path.join("local_data", "ad_issues.csv")
 AD_STALE_DAYS = 7
+AD_UNIVERSES = {
+    "ALL_COMMON": "普通株 (全米株式市場)",
+    "DOW": "NYダウ構成",
+    "SP500": "S&P 500構成",
+    "NYSE": "NYSE上場",
+    "NASDAQ": "NASDAQ上場",
+}
 
 
 def parse_ad_csv(text, market=None):
     """Parse manual daily advancing/declining issue counts into (market, [(date, cumulative net advances)])."""
     chosen, daily = parse_ad_records(text, market)
     total, series = 0.0, []
-    for day, advances, declines, _unchanged in daily:
+    for day, advances, declines, _unchanged, _unchanged_known in daily:
         total += advances - declines
         series.append((day, total))
     return chosen, series
@@ -431,7 +438,8 @@ def parse_ad_records(text, market=None):
 
     d_i, a_i, c_i = col("date"), col("advances", "advancing", "adv"), col("declines", "declining", "dec", "decl")
     u_i = col("unchanged", "unchanged issues", "unch")
-    m_i = col("market", "exchange")
+    known_i = col("unchanged_known")
+    m_i = col("universe", "market", "exchange")
     daily = {}
     for row in rows[start:]:
         try:
@@ -453,9 +461,12 @@ def parse_ad_records(text, market=None):
                 continue
             adv, dec, unchanged = map(int, raw_counts)
             label = row[m_i].strip().upper() if m_i is not None and row[m_i].strip() else "UNSPECIFIED"
+            unchanged_known = (row[known_i].strip().lower() in ("1", "true", "yes")
+                               if known_i is not None and len(row) > known_i
+                               else False)
         except (IndexError, ValueError):
             continue
-        daily.setdefault(label, {})[date] = (adv, dec, unchanged)
+        daily.setdefault(label, {})[date] = (adv, dec, unchanged, unchanged_known)
     if not daily:
         raise ValueError("A/D CSV has no observations")
     wanted = (market or "").strip().upper()
@@ -472,7 +483,7 @@ def read_ad_line(path=None):
     if not os.path.exists(path):
         return None
     with open(path, encoding="utf-8-sig") as handle:
-        return parse_ad_csv(handle.read(), os.environ.get("AD_MARKET"))
+        return parse_ad_csv(handle.read(), os.environ.get("AD_UNIVERSE") or os.environ.get("AD_MARKET"))
 
 
 def read_ad_records(path=None):
@@ -481,19 +492,45 @@ def read_ad_records(path=None):
     if not os.path.exists(path):
         return None
     with open(path, encoding="utf-8-sig") as handle:
-        return parse_ad_records(handle.read(), os.environ.get("AD_MARKET"))
+        return parse_ad_records(handle.read(), os.environ.get("AD_UNIVERSE") or os.environ.get("AD_MARKET"))
 
 
-AD_INDEX_TICKERS = {"NYSE": ("^NYA", "NYSE Composite"), "NASDAQ": ("^IXIC", "Nasdaq Composite")}
+def read_ad_universes(path=None):
+    path = path or os.environ.get("AD_ISSUES_CSV") or os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), AD_CSV_DEFAULT)
+    if not os.path.exists(path):
+        return {}
+    requested = os.environ.get("AD_UNIVERSE") or os.environ.get("AD_MARKET")
+    with open(path, encoding="utf-8-sig") as handle:
+        text = handle.read()
+    universes = (requested.upper(),) if requested else tuple(AD_UNIVERSES)
+    output = {}
+    for universe in universes:
+        try:
+            parsed_universe, records = parse_ad_records(text, universe)
+            output[parsed_universe] = records
+        except ValueError as exc:
+            if "no rows for the requested market" not in str(exc):
+                raise
+    return output
+
+
+AD_INDEX_TICKERS = {
+    "ALL_COMMON": ("^W5000", "Wilshire 5000", "reference"),
+    "DOW": ("^DJI", "Dow Jones Industrial Average", "constituent-index"),
+    "SP500": ("^GSPC", "S&P 500", "constituent-index"),
+    "NYSE": ("^NYA", "NYSE Composite", "reference"),
+    "NASDAQ": ("^IXIC", "Nasdaq Composite", "reference"),
+}
 
 
 def ad_breadth_summary(records, window=10):
     if not records:
         return None
     recent = records[-window:]
-    latest_day, advances, declines, unchanged = records[-1]
+    latest_day, advances, declines, unchanged, unchanged_known = records[-1]
     latest_pct = 100 * advances / (advances + declines) if advances + declines else None
-    ratios = [100 * adv / (adv + dec) for _, adv, dec, _ in recent if adv + dec]
+    ratios = [100 * adv / (adv + dec) for _, adv, dec, *_ in recent if adv + dec]
     average = sum(ratios) / len(ratios) if ratios else None
     if latest_pct is None:
         reading = "値上がり・値下がりがともに0のため比率を算出できません。"
@@ -507,20 +544,33 @@ def ad_breadth_summary(records, window=10):
         "date": latest_day, "advances": advances, "declines": declines, "unchanged": unchanged,
         "advance_pct": round(latest_pct, 2) if latest_pct is not None else None,
         "average_window": len(ratios), "average_pct": round(average, 2) if average is not None else None,
+        "whole_universe_pct": (
+            round(100 * advances / (advances + declines + unchanged), 2)
+            if unchanged_known and advances + declines + unchanged else None
+        ),
+        "unchanged_known": unchanged_known,
         "window": window, "reading": reading,
     }
+
+
+def cumulative_ad_line(records):
+    total, series = 0, []
+    for day, advances, declines, _unchanged, _unchanged_known in records:
+        total += advances - declines
+        series.append((day, total))
+    return series
 
 
 def compare_ad_index(ad_series, index_series, market):
     if market not in AD_INDEX_TICKERS:
         return None
-    ticker, index_name = AD_INDEX_TICKERS[market]
+    ticker, index_name, comparison_type = AD_INDEX_TICKERS[market]
     index_by_day = dict(index_series)
     paired = [(day, ad_value, index_by_day[day]) for day, ad_value in ad_series
               if day in index_by_day and index_by_day[day] > 0]
-    if not paired:
-        return {"ticker": ticker, "index_name": index_name, "series": [],
-                "reading": f"{index_name}との共通観測日がなく、比較できません。"}
+    if len(paired) < 2:
+        return {"ticker": ticker, "index_name": index_name, "comparison_type": comparison_type, "series": [],
+                "reading": f"{index_name}との共通観測日が2日未満のため、比較できません。"}
     reading = f"{index_name}とA/Dは同期間で比較中です。"
     if len(paired) >= 11:
         recent_start = paired[-11]
@@ -543,7 +593,7 @@ def compare_ad_index(ad_series, index_series, market):
         for day, ad_value, index_value in paired
     ]
     return {
-        "ticker": ticker, "index_name": index_name,
+        "ticker": ticker, "index_name": index_name, "comparison_type": comparison_type,
         "series": downsample(chart_series),
         "reading": reading,
     }
@@ -813,12 +863,13 @@ def generate(fred=fetch_fred, eia=fetch_eia, yf_close=_yf_close, now=None, allow
              shiller=fetch_shiller, finra=fetch_finra_margin, acm=fetch_acm, cot=fetch_cot,
              nyfed_hhdc=fetch_nyfed_hhdc, recession=fetch_nyfed_recession,
              cboe=fetch_cboe_put_call, barchart=read_barchart_cpcs, ad_reader=read_ad_line,
-             ad_records_reader=read_ad_records):
+             ad_records_reader=read_ad_universes):
     cache = {}
     results = {}
     errors = {}
     hhdc_content_cache = {}
     proxies = {}
+    ad_results = {}
 
     def fred_cached(sid):
         if sid not in cache:
@@ -864,20 +915,31 @@ def generate(fred=fetch_fred, eia=fetch_eia, yf_close=_yf_close, now=None, allow
                 else:
                     results[spec["id"]] = cboe()
             elif kind == "ad_manual":
-                loaded = ad_reader()
-                if loaded:
-                    market = loaded[0]
-                    proxies[spec["id"] + "_market"] = market
-                    results[spec["id"]] = loaded[1]
-                    records = ad_records_reader()
-                    if records and records[0] == market:
-                        proxies[spec["id"] + "_records"] = records[1]
+                loaded = ad_records_reader()
+                if isinstance(loaded, dict):
+                    records_by_universe = loaded
+                elif loaded:
+                    records_by_universe = {loaded[0]: loaded[1]}
+                else:
+                    records_by_universe = {}
+                if not records_by_universe:
+                    legacy = ad_reader()
+                    if legacy:
+                        market, cumulative = legacy
+                        records = ad_records_reader()
+                        if isinstance(records, tuple) and records[0] == market:
+                            records_by_universe = {market: records[1]}
+                            ad_results[market] = (cumulative, records[1])
+                for market, records in records_by_universe.items():
+                    if market not in AD_UNIVERSES or not records:
+                        continue
+                    ad_results[market] = (cumulative_ad_line(records), records)
                     index = AD_INDEX_TICKERS.get(market)
                     if index:
                         try:
-                            proxies[spec["id"] + "_index"] = (index[0], index[1], yf_close(index[0]))
+                            proxies[market + "_index"] = (index[0], index[1], index[2], yf_close(index[0]))
                         except Exception as exc:
-                            proxies[spec["id"] + "_index_error"] = type(exc).__name__
+                            proxies[market + "_index_error"] = type(exc).__name__
             elif kind == "cftc":
                 results[spec["id"]] = cot(p)
             elif kind == "nyfed_hhdc":
@@ -901,10 +963,32 @@ def generate(fred=fetch_fred, eia=fetch_eia, yf_close=_yf_close, now=None, allow
             else:
                 errors[spec["id"]] = "元データの取得に失敗したため算出できません。"
 
+    indicator_specs = []
+    for spec in SPECS:
+        if spec["kind"] == "ad_manual" and allow_restricted and ad_results:
+            for market in AD_UNIVERSES:
+                if market not in ad_results:
+                    continue
+                item_spec = dict(spec)
+                item_spec["id"] = "ad_line" if market == "NYSE" else f"ad_line_{market.lower()}"
+                item_spec["name"] = f"騰落(A/D)ライン — {AD_UNIVERSES[market]}"
+                item_spec["reason"] = "この対象ユニバースのCSV観測はありません。"
+                indicator_specs.append(item_spec)
+                series, records = ad_results[market]
+                results[item_spec["id"]] = series
+                proxies[item_spec["id"] + "_market"] = market
+                proxies[item_spec["id"] + "_records"] = records
+                if market + "_index" in proxies:
+                    proxies[item_spec["id"] + "_index"] = proxies[market + "_index"]
+                if market + "_index_error" in proxies:
+                    proxies[item_spec["id"] + "_index_error"] = proxies[market + "_index_error"]
+        else:
+            indicator_specs.append(spec)
+
     generated_dt = now or datetime.now(timezone.utc)
     generated = generated_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     indicators = [build_indicator(s, results.get(s["id"]), errors.get(s["id"]), allow_restricted)
-                  for s in SPECS]
+                  for s in indicator_specs]
     for item in indicators:
         if proxies.get(item["id"]) and item.get("latest"):
             item["name"] += " (代理: 自前probit計算)"
@@ -934,23 +1018,25 @@ def generate(fred=fetch_fred, eia=fetch_eia, yf_close=_yf_close, now=None, allow
             records = proxies.get(item["id"] + "_records")
             if records:
                 item["breadth"] = ad_breadth_summary(records)
-                item["daily_net"] = [[day, round(advances - declines)] for day, advances, declines, _ in records[-30:]]
+                item["daily_net"] = [[day, advances - declines] for day, advances, declines, *_ in records[-30:]]
                 index_data = proxies.get(item["id"] + "_index")
                 if index_data:
                     item["comparison"] = compare_ad_index(
-                        results[item["id"]], index_data[2], market)
+                        results[item["id"]], index_data[3], market)
                     item["comparison"]["ticker"] = index_data[0]
                     item["comparison"]["index_name"] = index_data[1]
+                    item["comparison"]["comparison_type"] = index_data[2]
                     item["comparison"]["source"] = "Yahoo Finance (ローカル比較用・再配布不可)"
                 else:
                     item["comparison"] = {
-                        "ticker": AD_INDEX_TICKERS.get(market, ("", ""))[0],
-                        "index_name": AD_INDEX_TICKERS.get(market, ("対象指数", ""))[1],
+                        "ticker": AD_INDEX_TICKERS.get(market, ("", "", ""))[0],
+                        "index_name": AD_INDEX_TICKERS.get(market, ("対象指数", "", ""))[1],
+                        "comparison_type": AD_INDEX_TICKERS.get(market, ("", "", "reference"))[2],
                         "series": [],
                         "reading": "比較指数を取得できないため、A/Dとの比較は表示できません。",
                         "error": proxies.get(item["id"] + "_index_error", "unsupported_market"),
                     }
-        if item.get("latest") and item["id"] == "ad_line":
+        if item.get("latest") and item["id"].startswith("ad_line"):
             try:
                 observation = datetime.strptime(item["latest"]["date"], "%Y-%m-%d").date()
                 if (generated_dt.date() - observation).days > AD_STALE_DAYS:
